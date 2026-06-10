@@ -1,0 +1,33 @@
+{
+  "name": "@vc/agent-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Agent runtime buatan kita: loop + skills + memory + comms + router (9Router) + guardrails.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./router": {
+      "types": "./dist/router/index.d.ts",
+      "default": "./dist/router/index.js"
+    },
+    "./skills": {
+      "types": "./dist/skills/index.d.ts",
+      "default": "./dist/skills/index.js"
+    },
+    "./memory": {
+      "types": "./dist/memory/index.d.ts",
+      "default": "./dist/memory/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "dependencies": {
+    "@vc/shared": "*"
+  }
+}

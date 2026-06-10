@@ -1,0 +1,25 @@
+{
+  "name": "@vc/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Orchestrator: comms (WhatsApp relay + owner auth), webhook inbound, auto-reply.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc --build",
+    "start": "node dist/main.js",
+    "dev": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@vc/agent-runtime": "*",
+    "@vc/shared": "*",
+    "fastify": "^5.2.0"
+  }
+}

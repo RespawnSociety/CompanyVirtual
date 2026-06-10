@@ -1,0 +1,56 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Test / coverage
+coverage/
+.vitest/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# ============================================================
+# SECRETS — JANGAN PERNAH commit kredensial (lihat plan §8).
+# Semua secret lewat Vault / env var; .env hanya lokal.
+# ============================================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.crt
+secrets/
+vault/
+*.secret
+credentials.json
+service-account*.json
+
+# WhatsApp (Baileys) session / auth state — berisi kredensial sesi
+auth_info/
+auth_info_baileys/
+wa-session/
+*.wa-session
+
+# Local databases
+*.sqlite
+*.sqlite3
+*.db
+data/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Tauri (fase 6)
+apps/desktop/src-tauri/target/
