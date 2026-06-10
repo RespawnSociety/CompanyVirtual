@@ -23,7 +23,7 @@
 
 | Fase | Tema | Status | Output utama |
 |---|---|---|---|
-| **0** | Foundations & Spikes | 🟡 jalan (0.1–0.5 selesai; 0.6 Codex pending) | 9Router + 1 agent loop + WA auto-reply |
+| **0** | Foundations & Spikes | ✅ selesai (0.1–0.6 lolos; Codex verified) | 9Router + 1 agent loop + WA auto-reply |
 | **1** | Platform Shell + Company Setup | ⬜ belum | Kantor 2D + Company/Dept/Character editor |
 | **2** | Runtime + 1 Agent Nyata | ⬜ belum | Directive → agent kerja → Artifact |
 | **3** | Departemen Lengkap + Workflow Engine | ⬜ belum | Pipeline Marketing + Approval Gate |
@@ -49,11 +49,12 @@ Legenda: ⬜ belum · 🟡 jalan · ✅ selesai (DoD lolos + Codex verified)
   - *DoD:* ✅ terbukti mock & live — think→act → web_search → balas → 2 memory item tersimpan.
 - [x] **0.5 Spike WhatsApp adapter + Owner Auth** — `apps/server/comms`: adapter (Cloud API + Mock), webhook inbound (Fastify), **filter nomor owner/whitelist**, auto-reply.
   - *DoD:* ✅ chat dari nomor owner → auto-reply; nomor lain ditolak (tak menyetir agent). (Cloud API diimplementasi; Baileys ditunda — lihat SPIKES §0.5.)
-- [ ] **0.6 Codex review Phase 0** — review kontrak `shared` + router + loop; isi BUGLIST/CODE_REVIEW; fix sampai bersih. **(MENUNGGU Codex.)**
+- [x] **0.6 Codex review Phase 0** — review kontrak `shared` + router + loop; isi BUGLIST/CODE_REVIEW; fix sampai bersih.
+  - *DoD:* ✅ Codex review 3 bug (BUG-001..003) + 4 temuan kualitas (CR-001..004) → semua di-fix Claude → Codex `VERIFIED_FIXED`/`VERIFIED`. `BUGLIST.md` & `CODE_REVIEW.md` kosong (nol item `OPEN`/`REOPENED`). Ringkasan: `docs/PERBAIKAN-2026-06-10.md`.
 
-**DoD Fase 0:** `SPIKES.md` terisi ✅ · skrip 9Router + agent loop pakai 1 tool nyata ✅ · auto-reply WA owner jalan, nomor lain ditolak ✅ · kontrak skill/router final ✅. **Sisa: review Codex (0.6) sebelum fase ditandai ✅.**
+**DoD Fase 0:** `SPIKES.md` terisi ✅ · skrip 9Router + agent loop pakai 1 tool nyata ✅ · auto-reply WA owner jalan, nomor lain ditolak ✅ · kontrak skill/router final ✅ · review Codex (0.6) lolos ✅. **Fase 0 ditandai ✅ selesai (2026-06-10).**
 
-**Status build:** `npm run build` ✅ · `npm run lint` ✅ · `npm test` ✅ 24/24 · spike `router`/`loop`/`wa` ✅.
+**Status build:** `npm run build` ✅ · `npm run lint` ✅ · `npm test` ✅ 30/30 · spike `router`/`loop`/`wa` ✅.
 
 ---
 
