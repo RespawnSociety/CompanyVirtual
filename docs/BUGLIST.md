@@ -10,10 +10,10 @@
 ## Ringkasan
 | ID | Judul | Severity | Status | Location |
 |---|---|---|---|---|
-| BUG-106 | PATCH agent menerima `status` di luar `AgentStatus` | medium | FIXED | `apps/server/src/api/routes.ts:291` |
-| BUG-107 | `API_AUTH_TOKEN` membuat REST terlindungi, tetapi web client tidak pernah mengirim bearer | high | OPEN (ditunda) | `apps/web/src/api.ts:40`, `apps/server/src/server.ts:57` |
-| BUG-108 | Socket realtime tetap bisa mengambil `world:sync` tanpa auth saat REST sudah dilindungi token | high | OPEN (ditunda) | `apps/server/src/realtime.ts:33`, `apps/server/src/server.ts:57` |
-| BUG-109 | Menghapus company aktif meninggalkan `companyId` stale di UI | medium | FIXED | `apps/web/src/App.tsx:98`, `apps/web/src/components/CompanySetup.tsx:115` |
+| BUG-106 | PATCH agent menerima `status` di luar `AgentStatus` | medium | VERIFIED_FIXED | `apps/server/src/api/routes.ts:297` |
+| BUG-107 | `API_AUTH_TOKEN` membuat REST terlindungi, tetapi web client tidak pernah mengirim bearer | high | OPEN | `apps/web/src/api.ts:40`, `apps/server/src/server.ts:57` |
+| BUG-108 | Socket realtime tetap bisa mengambil `world:sync` tanpa auth saat REST sudah dilindungi token | high | OPEN | `apps/server/src/realtime.ts:33`, `apps/server/src/server.ts:57` |
+| BUG-109 | Menghapus company aktif meninggalkan `companyId` stale di UI | medium | VERIFIED_FIXED | `apps/web/src/App.tsx:58`, `apps/web/src/components/CompanySetup.tsx:103` |
 
 ---
 
@@ -21,10 +21,10 @@
 
 ### BUG-106 - PATCH agent menerima `status` di luar `AgentStatus`
 
-- **Status:** FIXED
+- **Status:** VERIFIED_FIXED
 - **Severity:** medium
 - **Category:** type-contract
-- **Location:** `apps/server/src/api/routes.ts:291`, `apps/server/src/db/store.ts:416`, `packages/shared/src/types.ts:84`
+- **Location:** `apps/server/src/api/routes.ts:297`, `apps/server/src/db/store.ts:478`, `packages/shared/src/types.ts:84`
 - **Ditemukan:** 2026-06-11 oleh Codex
 
 **Deskripsi**
@@ -65,11 +65,11 @@ Fastify inject pada server in-memory membuat agent, lalu `PATCH /api/agents/:id`
 2. Untuk `POST /api/departments/:departmentId/agents` dan `PATCH /api/agents/:id`, tolak status invalid dengan `400`.
 3. Tambahkan test di `tests/configApi.test.ts`: PATCH status invalid harus 400 dan status lama tidak berubah.
 
-**Diperbaiki (Claude 2026-06-11)** — status `FIXED`, menunggu verifikasi Codex.
+**Diperbaiki (Claude 2026-06-11)** — sudah diverifikasi Codex pada 2026-06-11.
 Validator `asAgentStatus(v)` baru di `apps/server/src/api/routes.ts` (whitelist `idle|working|talking|blocked`). PATCH agent: bila key `status` hadir tapi nilai invalid → `400` (tak disimpan); valid → di-set. POST agent tidak membaca `status` (default `idle`), jadi tak ada jalur lain. Test ditambah di `tests/configApi.test.ts`: PATCH `status:"banana"` → 400 dan status lama (`working`) tak berubah. `npm test` (45 pass) & `npm run lint` lulus.
 
 **Catatan verifikasi perbaikan**
-Kosong sampai Codex memverifikasi.
+VERIFIED_FIXED 2026-06-11 oleh Codex. Pembacaan kode: `apps/server/src/api/routes.ts:43-49` menambahkan whitelist `AgentStatus`, dan `apps/server/src/api/routes.ts:297-301` mengembalikan `400` bila key `status` hadir tetapi nilainya bukan `idle|working|talking|blocked`. Observasi runtime setelah `npm run build`: PATCH valid `status:"working"` menghasilkan 200, PATCH invalid `status:"banana"` menghasilkan 400, dan `GET /world` tetap mengembalikan `worldStatus:"working"`. Gate lulus: `npm run build`, `npm run lint`, `npm test` (45 passed), `npm run build:web`.
 
 ---
 
@@ -188,10 +188,10 @@ Kosong sampai Claude menandai `FIXED`.
 
 ### BUG-109 - Menghapus company aktif meninggalkan `companyId` stale di UI
 
-- **Status:** FIXED
+- **Status:** VERIFIED_FIXED
 - **Severity:** medium
 - **Category:** logic
-- **Location:** `apps/web/src/App.tsx:98`, `apps/web/src/components/CompanySetup.tsx:115`
+- **Location:** `apps/web/src/App.tsx:47`, `apps/web/src/components/CompanySetup.tsx:103`
 - **Ditemukan:** 2026-06-11 oleh Codex
 
 **Deskripsi**
@@ -238,8 +238,8 @@ Alur `deleteCompany(activeId) -> reload() -> api.getWorld(activeId)` pasti memak
 3. Setelah delete company aktif di `CompanySetup`, bisa juga panggil callback eksplisit untuk memilih company berikutnya/null.
 4. Tambahkan test komponen atau minimal helper-state test untuk kasus delete selected company.
 
-**Diperbaiki (Claude 2026-06-11)** — status `FIXED`, menunggu verifikasi Codex.
+**Diperbaiki (Claude 2026-06-11)** — sudah diverifikasi Codex pada 2026-06-11.
 `App.tsx` kini punya effect rekonsiliasi `[companies]`: tiap daftar company berubah (mount/buat/hapus), `setCompanyId((cur) => cur valid ? cur : companies[0]?.id ?? null)` (updater fungsional → tak menabrak pilihan baru dari `onSelectCompany`). `reload()` memakai list hasil `refreshCompanies()` dan hanya `getWorld` bila company aktif masih ada (hindari fetch 404 untuk id terhapus); selebihnya effect rekonsiliasi + world-loader memuat ulang. Effect mount disederhanakan jadi sekadar `refreshCompanies()`. `npm run build:web` & `npm test` lulus. (Catatan: belum ada test komponen React di repo; verifikasi via build + pembacaan alur.)
 
 **Catatan verifikasi perbaikan**
-Kosong sampai Codex memverifikasi.
+VERIFIED_FIXED 2026-06-11 oleh Codex. Pembacaan kode: `apps/web/src/App.tsx:47-63` sekarang menyimpan hasil `refreshCompanies()` dan merekonsiliasi `companyId` setiap daftar company berubah; `apps/web/src/App.tsx:101-112` hanya memanggil `getWorld(companyId)` bila id aktif masih ada di list terbaru. Data-flow delete: `apps/web/src/components/CompanySetup.tsx:103-104` memanggil `api.deleteCompany(c.id)` lalu `reload()`, sehingga list terbaru memicu rekonsiliasi ke company lain atau `null` dan world-loader memuat snapshot baru/clear state. Gate lulus: `npm run build`, `npm run lint`, `npm test` (45 passed), `npm run build:web`.

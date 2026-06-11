@@ -9,12 +9,24 @@
 > `packages/agent-runtime`, `packages/templates`, `apps/server`, dan `apps/web`. Bug aktif ada di
 > `docs/BUGLIST.md` (`BUG-106..109`). CR-102 sudah terverifikasi beres; CR lain tetap kualitas/arsitektur.
 
-> **Catatan pengerjaan Claude 2026-06-11 (pass 2):** CR-103..109 sudah **dikerjakan** (status
-> `ADDRESSED`, lihat "Diterapkan" tiap entri). CR-102 = `VERIFIED` (Codex). CR-101 = setengah:
+> **Catatan pengerjaan Claude 2026-06-11 (pass 2):** CR-103..109 sudah **dikerjakan** dan
+> diverifikasi Codex (status `VERIFIED`, lihat "Diterapkan" tiap entri). CR-102 = `VERIFIED`
+> (Codex). CR-101 = setengah:
 > mekanisme bearer/CORS sudah ada (pass 1), sisanya = boundary auth lintas-protokol di `BUG-107`
 > (web client kirim bearer) + `BUG-108` (auth socket) yang **butuh keputusan strategi** → masih `OPEN`.
-> Gate lulus: `npm run build`, `npm test` (45 pass), `npm run lint`, `npm run build:web`.
-> `ADDRESSED` = klaim Claude; menunggu `VERIFIED` independen (Codex CLI belum terpasang di environment ini).
+> Gate verifikasi Codex lulus: `npm run build`, `npm run lint`, `npm test` (45 pass),
+> `npm run build:web`.
+
+> **Catatan verifikasi Codex 2026-06-11:** CR-103..109 sudah dibaca ulang pada source terbaru.
+> Bukti utama: CR-103 memakai registry `mapKey` (`apps/web/src/game/maps.ts:18-30`,
+> `apps/web/src/game/OfficeScene.ts:118-120`); CR-104 memakai batch helper relasi
+> (`apps/server/src/db/store.ts:157-178`, `:204-215`, `:323-330`); CR-105 memakai
+> `defaultGenId` bersama (`apps/server/src/db/store.ts:12`, `apps/server/src/config/seed.ts:10`);
+> CR-106 memakai `useAsyncAction` dan parsing field tunggal (`apps/web/src/hooks/useAsyncAction.ts:17-36`);
+> CR-107 update tile di `onComplete` tween (`apps/web/src/game/OfficeScene.ts:263-277`);
+> CR-108 subscribe socket idempoten dan cleanup client (`apps/server/src/realtime.ts:33-41`,
+> `apps/web/src/socket.ts:44-46`); CR-109 clear state plus ignore guard
+> (`apps/web/src/components/TaskBoard.tsx:29-53`, `apps/web/src/components/CommsViewer.tsx:20-44`).
 
 ## Fokus penilaian
 Optimal? Clean? Ada duplikasi / over-engineering? Penamaan jelas? Konsisten dengan kontrak `packages/shared`?
@@ -28,13 +40,13 @@ Workflow data-driven (bukan hardcode)? Semua LLM lewat 9Router? Biaya/performa w
 |---|---|---|---|---|---|
 | CR-101 | Arsitektur auth REST/web/realtime belum satu jalur | architecture/security | high | OPEN | `apps/server/src/server.ts`, `apps/server/src/realtime.ts`, `apps/web/src/api.ts` |
 | CR-102 | PATCH bisa mengosongkan field opsional | consistency | medium | VERIFIED | `apps/server/src/api/routes.ts`, `apps/server/src/db/store.ts` |
-| CR-103 | `Floor.mapKey` field mati - renderer hardcode `office-map` | consistency | medium | ADDRESSED | `apps/web/src/game/OfficeScene.ts`, `apps/web/src/game/maps.ts` |
-| CR-104 | N+1 query di `list*` / `getWorldSnapshot` | performance | medium | ADDRESSED | `apps/server/src/db/store.ts` |
-| CR-105 | `newId` duplikasi `defaultGenId` | reuse | low | ADDRESSED | `apps/server/src/db/store.ts`, `apps/server/src/config/seed.ts` |
-| CR-106 | Duplikasi pola kecil di REST handler dan komponen web | cleanliness | low | ADDRESSED | `apps/server/src/api/routes.ts`, `apps/web/src/hooks/useAsyncAction.ts` |
-| CR-107 | `walkTo` set `obj.tile` ke tujuan sebelum tween selesai | correctness-minor | low | ADDRESSED | `apps/web/src/game/OfficeScene.ts` |
-| CR-108 | Socket re-subscribe per ganti company | robustness | low | ADDRESSED | `apps/web/src/App.tsx`, `apps/server/src/main.ts`, `apps/server/src/realtime.ts` |
-| CR-109 | Task/Comms viewer bisa menampilkan data lama saat company berganti | robustness | low | ADDRESSED | `apps/web/src/components/TaskBoard.tsx`, `apps/web/src/components/CommsViewer.tsx` |
+| CR-103 | `Floor.mapKey` field mati - renderer hardcode `office-map` | consistency | medium | VERIFIED | `apps/web/src/game/OfficeScene.ts`, `apps/web/src/game/maps.ts` |
+| CR-104 | N+1 query di `list*` / `getWorldSnapshot` | performance | medium | VERIFIED | `apps/server/src/db/store.ts` |
+| CR-105 | `newId` duplikasi `defaultGenId` | reuse | low | VERIFIED | `apps/server/src/db/store.ts`, `apps/server/src/config/seed.ts` |
+| CR-106 | Duplikasi pola kecil di REST handler dan komponen web | cleanliness | low | VERIFIED | `apps/server/src/api/routes.ts`, `apps/web/src/hooks/useAsyncAction.ts` |
+| CR-107 | `walkTo` set `obj.tile` ke tujuan sebelum tween selesai | correctness-minor | low | VERIFIED | `apps/web/src/game/OfficeScene.ts` |
+| CR-108 | Socket re-subscribe per ganti company | robustness | low | VERIFIED | `apps/web/src/App.tsx`, `apps/server/src/main.ts`, `apps/server/src/realtime.ts` |
+| CR-109 | Task/Comms viewer bisa menampilkan data lama saat company berganti | robustness | low | VERIFIED | `apps/web/src/components/TaskBoard.tsx`, `apps/web/src/components/CommsViewer.tsx` |
 
 ---
 
@@ -84,7 +96,7 @@ Tidak ada follow-up untuk CR ini.
 - **Type:** consistency
 - **Severity:** medium
 - **Location:** `apps/server/src/db/store.ts:156`, `apps/web/src/game/OfficeScene.ts`, `apps/web/src/game/maps.ts`
-- **Status:** ADDRESSED
+- **Status:** VERIFIED
 
 **Temuan**
 Store menyimpan `Floor.mapKey` dengan default `"office-default"`, tetapi `OfficeScene` selalu memakai `MAP_KEY = "office-map"` dan selalu load `assets/maps/office.json`. Field `mapKey` belum memengaruhi renderer.
@@ -105,7 +117,7 @@ Registry `mapKey -> path` baru di `apps/web/src/game/maps.ts` (`mapPathFor`/`isK
 - **Type:** performance
 - **Severity:** medium
 - **Location:** `apps/server/src/db/store.ts:128`, `apps/server/src/db/store.ts:192`, `apps/server/src/db/store.ts:311`, `apps/server/src/db/store.ts:493`
-- **Status:** ADDRESSED
+- **Status:** VERIFIED
 
 **Temuan**
 `rowToCompany`, `rowToFloor`, dan `rowToDepartment` masing-masing memanggil query anak (`floorIdsOf`, `departmentIdsOf`, `agentIdsOf`). `getWorldSnapshot` memanggil beberapa list dan dapat menghasilkan banyak query kecil pada jalur broadcast.
@@ -126,7 +138,7 @@ Helper `childIdsByParent(table, parentCol, parentIds, orderBy)` baru: satu query
 - **Type:** reuse
 - **Severity:** low
 - **Location:** `apps/server/src/db/store.ts`, `apps/server/src/config/seed.ts`, `packages/agent-runtime/src/util/id.ts:4`
-- **Status:** ADDRESSED
+- **Status:** VERIFIED
 
 **Temuan**
 Format id `${prefix}_${randomUUID()}` ada di `defaultGenId`, tetapi store dan seed masih membuat id sendiri.
@@ -147,7 +159,7 @@ Gunakan `defaultGenId` sebagai satu sumber format id, atau pindahkan helper id k
 - **Type:** cleanliness / reuse
 - **Severity:** low
 - **Location:** `apps/server/src/api/routes.ts`, `apps/web/src/hooks/useAsyncAction.ts`, `apps/web/src/components/{CompanySetup,DepartmentBuilder,CharacterEditor}.tsx`
-- **Status:** ADDRESSED
+- **Status:** VERIFIED
 
 **Temuan**
 Masih ada pola berulang: helper parsing body dipanggil berulang di handler, pola `busy/error/try/catch/finally` disalin di beberapa komponen, dan beberapa delete action tidak memakai wrapper `run()` yang sama.
@@ -168,7 +180,7 @@ REST: handler PATCH/POST hitung `asStr(...)` sekali (`const name = asStr(...); i
 - **Type:** correctness-minor
 - **Severity:** low
 - **Location:** `apps/web/src/game/OfficeScene.ts`
-- **Status:** ADDRESSED
+- **Status:** VERIFIED
 
 **Temuan**
 `walkTo` mengubah `obj.tile` ke tile tujuan sebelum tween selesai. Selama animasi, posisi logis dan posisi visual berbeda.
@@ -189,7 +201,7 @@ Set `obj.tile = tujuan` sinkron dihapus. Tiap langkah tween chain punya `onCompl
 - **Type:** robustness
 - **Severity:** low
 - **Location:** `apps/web/src/App.tsx`, `apps/server/src/main.ts`, `apps/server/src/realtime.ts`
-- **Status:** ADDRESSED
+- **Status:** VERIFIED
 
 **Temuan**
 Tiap ganti company membuat socket baru dan subscribe ulang. Sisi server untuk window `onMutate` sudah diperbaiki karena `RealtimeHub` dibuat sebelum `listen()` (`apps/server/src/main.ts:148`), tetapi churn koneksi client masih ada.
@@ -210,7 +222,7 @@ Pakai satu socket bersama dan ganti room via emit/unsubscribe eksplisit, atau pa
 - **Type:** robustness
 - **Severity:** low
 - **Location:** `apps/web/src/components/TaskBoard.tsx`, `apps/web/src/components/CommsViewer.tsx`
-- **Status:** ADDRESSED
+- **Status:** VERIFIED
 
 **Temuan**
 Saat `companyId` berubah, `TaskBoard` dan `CommsViewer` hanya `setLoaded(false)` lalu fetch data baru. State `tasks`/`msgs` lama tidak di-clear dan tidak ada guard ignore untuk response lama. Selama loading, komponen bisa menampilkan data company sebelumnya.
