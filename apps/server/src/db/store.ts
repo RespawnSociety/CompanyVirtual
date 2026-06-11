@@ -478,19 +478,11 @@ export class ConfigStore {
   }
 
   listCommsByCompany(_companyId: Id): CommsMessage[] {
-    // Phase 1: belum ada threading per-company; kembalikan semua pesan (umumnya kosong).
-    const rows = this.db
-      .prepare("SELECT * FROM comms_messages ORDER BY at, id")
-      .all() as Record<string, unknown>[];
-    return rows.map((r) => ({
-      id: r["id"] as Id,
-      threadId: r["thread_id"] as Id,
-      from: r["from_party"] as CommsMessage["from"],
-      to: r["to_party"] as CommsMessage["to"],
-      channel: r["channel"] as CommsMessage["channel"],
-      text: r["text"] as string,
-      at: Number(r["at"]),
-    }));
+    // Phase 1: belum ada pemetaan thread→company dan belum ada produsen comms.
+    // Sengaja kembalikan kosong: mengembalikan SEMUA pesan akan membocorkan percakapan
+    // lintas-company begitu tabel terisi. Comms ter-scope per company menyusul di Phase 3
+    // (WA relay 2 arah + tabel threads dengan companyId).
+    return [];
   }
 
   // ---------------- World snapshot ----------------

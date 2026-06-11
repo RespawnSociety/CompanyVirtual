@@ -1,6 +1,10 @@
 /**
  * WorldView — host kantor 2D (Phaser). Menggambar karakter dari WorldSnapshot dan
  * memperbaruinya tiap snapshot berubah. Pemilihan lantai bila company punya >1 lantai.
+ *
+ * Scene Phaser baru valid setelah event `ready` (instansiasi scene asinkron). Kita
+ * pegang world/floor di ref agar bisa diterapkan begitu scene siap, dan juga saat
+ * snapshot berubah setelahnya.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -12,11 +16,23 @@ export function WorldView({ world }: { world: WorldSnapshot | null }): JSX.Eleme
   const handleRef = useRef<GameHandle | null>(null);
   const [floorId, setFloorId] = useState<string>("");
 
-  // Boot Phaser sekali saat mount.
+  // Ref selalu menyimpan world/floor terkini (dipakai callback `ready`).
+  const worldRef = useRef<WorldSnapshot | null>(world);
+  const floorRef = useRef<string>(floorId);
+  worldRef.current = world;
+  floorRef.current = floorId;
+
+  // Boot Phaser sekali saat mount. Terapkan world saat scene siap (event ready).
   useEffect(() => {
     if (!hostRef.current) return;
     const handle = bootGame(hostRef.current);
     handleRef.current = handle;
+    const applyCurrent = (): void => {
+      if (worldRef.current) {
+        handle.getScene()?.applyWorld(worldRef.current, floorRef.current || undefined);
+      }
+    };
+    handle.game.events.once("ready", applyCurrent);
     return () => {
       handle.destroy();
       handleRef.current = null;
@@ -30,10 +46,10 @@ export function WorldView({ world }: { world: WorldSnapshot | null }): JSX.Eleme
     if (!exists) setFloorId(world.floors[0]?.id ?? "");
   }, [world, floorId]);
 
-  // Terapkan snapshot ke scene tiap berubah.
+  // Terapkan snapshot ke scene tiap berubah (no-op aman bila scene belum siap).
   useEffect(() => {
-    if (!handleRef.current || !world) return;
-    handleRef.current.scene.applyWorld(world, floorId || undefined);
+    if (!world) return;
+    handleRef.current?.getScene()?.applyWorld(world, floorId || undefined);
   }, [world, floorId]);
 
   const agentCount = world

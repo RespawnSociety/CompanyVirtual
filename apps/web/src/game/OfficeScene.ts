@@ -120,6 +120,14 @@ export class OfficeScene extends Phaser.Scene {
       if (existing) {
         existing.label.setText(agent.name);
         existing.sprite.setTint(colorForSprite(agent.spriteKey));
+        // deskPos bisa berubah lewat Character Editor → pindahkan karakter ke meja baru.
+        const t = this.clampTile(agent.deskPos.x, agent.deskPos.y);
+        if (t.x !== existing.tile.x || t.y !== existing.tile.y) {
+          existing.active?.stop();
+          existing.tile = t;
+          const { wx, wy } = this.tileToWorld(t.x, t.y);
+          existing.container.setPosition(wx, wy);
+        }
       } else {
         this.chars.set(agent.id, this.spawnChar(agent));
       }
@@ -243,8 +251,12 @@ export class OfficeScene extends Phaser.Scene {
   }
 
   private clampTile(x: number, y: number): { x: number; y: number } {
-    const cx = Math.min(Math.max(1, Math.round(x)), this.gridW - 2 || 1);
-    const cy = Math.min(Math.max(1, Math.round(y)), this.gridH - 2 || 1);
-    return { x: cx, y: cy };
+    // Batas dalam (hindari dinding tepi). Aman walau grid belum terbentuk (gridW/H = 0).
+    const maxX = Math.max(1, this.gridW - 2);
+    const maxY = Math.max(1, this.gridH - 2);
+    return {
+      x: Math.min(Math.max(1, Math.round(x)), maxX),
+      y: Math.min(Math.max(1, Math.round(y)), maxY),
+    };
   }
 }

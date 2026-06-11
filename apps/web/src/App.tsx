@@ -67,7 +67,19 @@ export function App(): JSX.Element {
       return;
     }
     localStorage.setItem(LS_KEY, companyId);
-    api.getWorld(companyId).then(setWorld).catch(() => setWorld(null));
+    // Guard balapan: abaikan respons getWorld lama bila company keburu berganti.
+    let ignore = false;
+    api
+      .getWorld(companyId)
+      .then((w) => {
+        if (!ignore) setWorld(w);
+      })
+      .catch(() => {
+        if (!ignore) setWorld(null);
+      });
+    return () => {
+      ignore = true;
+    };
   }, [companyId]);
 
   // Realtime: subscribe ke company terpilih → update world saat config berubah.
