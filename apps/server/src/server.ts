@@ -6,13 +6,23 @@
  */
 
 import Fastify, { type FastifyInstance } from "fastify";
+import type { Id } from "@vc/shared";
 import type { WaRelay } from "./comms/relay.js";
 import { type CloudApiAdapter, parseCloudWebhook } from "./comms/cloudAdapter.js";
+import type { ConfigStore } from "./db/store.js";
+import { registerConfigRoutes } from "./api/routes.js";
 
 export interface BuildServerDeps {
-  relay: WaRelay;
+  /** Relay WhatsApp (Phase 0). Opsional: server config-only (Phase 1) tak butuh. */
+  relay?: WaRelay;
   /** Adapter cloud untuk verifikasi webhook GET (opsional; mode mock tak perlu). */
   cloud?: CloudApiAdapter;
+  /** Store Configuration layer (Phase 1). Bila ada → daftarkan REST `/api/*`. */
+  configStore?: ConfigStore;
+  /** Callback saat config sebuah company berubah (untuk broadcast realtime). */
+  onMutate?: (companyId: Id) => void;
+  /** Origin yang diizinkan CORS (default "*" untuk dev lokal). */
+  corsOrigin?: string;
   /** Path webhook (default /webhook/whatsapp). */
   webhookPath?: string;
   /** Kapasitas cache dedup messageId (default 1000). 0 = nonaktifkan dedup. */
@@ -24,7 +34,31 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
   const path = deps.webhookPath ?? "/webhook/whatsapp";
   const seen = new SeenMessageIds(deps.dedupCapacity ?? 1000);
 
+  // CORS sederhana (dev): izinkan web (Vite) memanggil API lintas-origin.
+  // Di dev kita juga sediakan Vite proxy, jadi ini sekadar fallback.
+  const corsOrigin = deps.corsOrigin ?? "*";
+  app.addHook("onRequest", (req, reply, done) => {
+    reply.header("access-control-allow-origin", corsOrigin);
+    reply.header("access-control-allow-methods", "GET,POST,PATCH,DELETE,OPTIONS");
+    reply.header("access-control-allow-headers", "content-type");
+    if (req.method === "OPTIONS") {
+      void reply.code(204).send();
+      return;
+    }
+    done();
+  });
+
   app.get("/health", () => ({ ok: true }));
+
+  // REST Configuration layer (Phase 1) — hanya bila store diberikan.
+  if (deps.configStore) {
+    registerConfigRoutes(app, deps.configStore, {
+      ...(deps.onMutate ? { onMutate: deps.onMutate } : {}),
+    });
+  }
+
+  const relay = deps.relay;
+  if (!relay) return app; // server config-only (tanpa webhook WhatsApp).
 
   // Verifikasi webhook (Meta GET handshake).
   app.get(path, (req, reply) => {
@@ -55,7 +89,7 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
     // Jangan di-await: relay bisa memanggil LLM/9Router (default timeout 60s) dan
     // kirim balasan WhatsApp. Menunggunya di sini akan menahan ack 200.
     for (const msg of fresh) {
-      void deps.relay.handleInbound(msg).catch((err: unknown) => {
+      void relay.handleInbound(msg).catch((err: unknown) => {
         app.log.error(err);
       });
     }

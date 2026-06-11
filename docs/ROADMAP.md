@@ -24,7 +24,7 @@
 | Fase | Tema | Status | Output utama |
 |---|---|---|---|
 | **0** | Foundations & Spikes | ✅ selesai (0.1–0.6 lolos; Codex verified) | 9Router + 1 agent loop + WA auto-reply |
-| **1** | Platform Shell + Company Setup | ⬜ belum | Kantor 2D + Company/Dept/Character editor |
+| **1** | Platform Shell + Company Setup | 🟡 implementasi selesai (1.1–1.8 ✓ build/lint/test) — menunggu Codex 1.9 | Kantor 2D + Company/Dept/Character editor |
 | **2** | Runtime + 1 Agent Nyata | ⬜ belum | Directive → agent kerja → Artifact |
 | **3** | Departemen Lengkap + Workflow Engine | ⬜ belum | Pipeline Marketing + Approval Gate |
 | **4** | Aksi Eksternal + Keamanan | ⬜ belum | Publish ke akun test + Vault + audit |
@@ -62,17 +62,19 @@ Legenda: ⬜ belum · 🟡 jalan · ✅ selesai (DoD lolos + Codex verified)
 
 **Tujuan:** dunia 2D + seluruh layer konfigurasi data-driven (belum ada agent hidup).
 
-- [ ] **1.1 Tilemap kantor** — Phaser 3 + Vite, load map Tiled (JSON), 1 lantai, karakter bisa jalan (pathfinding easystarjs), jam + HUD.
-- [ ] **1.2 DB layer** — SQLite + repository untuk entitas `shared`. Save/load.
-- [ ] **1.3 Company Setup (UI React)** — buat & namai company, branding, tambah floor → tersimpan ke DB.
-- [ ] **1.4 Department Builder (UI)** — tambah departemen ke floor: pilih dari template atau custom; atur purpose, skillPool, workflowId.
-- [ ] **1.5 Character Editor (UI)** — form → `AgentProfile` (identitas, sprite, deskripsi→persona, skillScope, guardrails, deskPos, modelPolicy) → DB.
-- [ ] **1.6 Marketing template** — `packages/templates/marketing`: roleTemplates (Manager, Market Checker, Script Maker, Reviewer, Social Media), defaultSkills, defaultWorkflow. Seed sebagai dept pertama.
-- [ ] **1.7 Task Board & Comms Viewer (dummy)** — tampilkan data placeholder.
-- [ ] **1.8 WS/REST bridge** — `FACE <-> ORCH` (socket.io), event bus → animasi karakter.
-- [ ] **1.9 Codex review Phase 1** — fokus: konsistensi kontrak DB↔shared, tidak ada hardcode "marketing" di engine.
+- [x] **1.1 Tilemap kantor** — Phaser 3 + Vite, load map Tiled (JSON), 1 lantai, karakter bisa jalan (pathfinding easystarjs), jam + HUD. → `apps/web/src/game/OfficeScene.ts`, map `apps/web/public/assets/maps/office.json`.
+- [x] **1.2 DB layer** — `node:sqlite` (tanpa native build) + `ConfigStore` repository untuk entitas `shared`. Save/load + cascade. → `apps/server/src/db/`.
+- [x] **1.3 Company Setup (UI React)** — buat & namai company, branding (warna), tambah/hapus floor → tersimpan ke DB. → `apps/web/src/components/CompanySetup.tsx`.
+- [x] **1.4 Department Builder (UI)** — tambah departemen ke floor: dari template atau custom; atur purpose, skillPool. → `DepartmentBuilder.tsx`.
+- [x] **1.5 Character Editor (UI)** — form → `AgentProfile` (identitas, sprite, deskripsi→persona, skillScope, guardrails, deskPos, modelPolicy) → DB. → `CharacterEditor.tsx`.
+- [x] **1.6 Marketing template** — `packages/templates/marketing`: roleTemplates (Manager, Market Checker, Script Maker, Reviewer, Social Media), defaultSkills, defaultWorkflow. Seed lewat `seedDepartmentFromTemplate` (engine generik, workflow di-clone).
+- [x] **1.7 Task Board & Comms Viewer (dummy)** — tampilkan data placeholder (tabel/papan; data nyata mulai Phase 2/3). → `TaskBoard.tsx`, `CommsViewer.tsx`.
+- [x] **1.8 WS/REST bridge** — `FACE <-> ORCH`: REST `/api/*` (Fastify) + socket.io `RealtimeHub` (room per company; `world:sync` + jalur `agent:event` untuk animasi Phase 2). → `apps/server/src/api/routes.ts`, `realtime.ts`, `apps/web/src/{api,socket}.ts`.
+- [ ] **1.9 Codex review Phase 1** — fokus: konsistensi kontrak DB↔shared, tidak ada hardcode "marketing" di engine, validasi input REST, keamanan CORS. **(belum — langkah berikutnya)**
 
 **DoD Fase 1:** buat company nama bebas → tambah dept Marketing dari template → karakter muncul di lantai & bisa jalan → semua config tersimpan & ter-load ulang.
+
+**Status build Phase 1:** `npm run build` ✅ · `npm run lint` ✅ · `npm run typecheck:web` ✅ · `npm run build:web` ✅ · `npm test` ✅ 43/43 (templates, db, seed, configApi + Phase 0). Smoke test live: REST company→floor→dept(template)→world (5 agent) + socket.io `world:sync` ✅. **Fase 1 belum ✅ — menunggu review Codex (1.9).**
 
 ---
 

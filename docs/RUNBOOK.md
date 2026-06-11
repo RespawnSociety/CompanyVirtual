@@ -81,13 +81,57 @@ Ketiganya **deterministik** dan tidak butuh 9Router/WhatsApp hidup.
 
 ---
 
+---
+
+## Phase 1 — Platform Shell + Company Setup 🎮
+
+Dunia 2D (Phaser) + Configuration layer data-driven (Company/Floor/Department/Character),
+disimpan ke SQLite lewat REST, disinkronkan realtime (socket.io). Belum ada agent "hidup".
+
+### Catatan teknis
+- **DB:** `node:sqlite` (built-in Node ≥ 22) — **tanpa kompilasi native** (penting di Windows + Node terbaru).
+  File default `data/vc.db` (di-`.gitignore`). Set `DB_PATH=:memory:` untuk non-persisten.
+- **Web:** Vite 7 + React 18 + Phaser 3 (`apps/web`). Dev server mem-proxy `/api` & `/socket.io`
+  ke orchestrator (`:8787`) → web pakai URL relatif, tak perlu CORS.
+
+### Verifikasi cepat (logika, tanpa browser)
+```bash
+npm run build           # tsc backend (shared, agent-runtime, templates, server)
+npm run typecheck:web   # tsc --noEmit web
+npm run build:web       # vite build web (bundling)
+npm test                # 43 test: + templates, db (persistensi), seed, configApi (inject)
+npm run lint            # eslint seluruh repo (termasuk web)
+```
+
+### DoD Fase 1 — uji manual end-to-end (butuh 2 terminal)
+1. Terminal A: `npm run dev:server`  → orchestrator di `http://127.0.0.1:8787` (REST `/api/*` + socket.io).
+2. Terminal B: `npm run dev:web`     → buka `http://localhost:5173`.
+3. Di browser:
+   - Tab **Company** → isi nama (mis. *"PT Maju Jaya"*) → **Buat company** → **Tambah lantai**.
+   - Tab **Departemen** → pilih lantai → sumber **Dari template** → *Pemasaran (Marketing)* → **Tambah departemen**
+     (men-seed 5 karakter + workflow).
+   - Tab **Kantor** → 5 karakter muncul di lantai. Klik satu karakter (terpilih), lalu klik petak lantai →
+     karakter **berjalan** (menghindari dinding). Jam in-game berjalan di HUD.
+   - Tab **Karakter** → edit/ buat `AgentProfile` (persona, skillScope, guardrails, meja, model tier) → tersimpan.
+   - Tab **Task Board** / **Comms** → tampil placeholder bertanda jelas (terisi Phase 2/3).
+4. **Reload** (refresh browser / restart server dengan `DB_PATH=data/vc.db`) → seluruh config (company,
+   lantai, departemen, karakter) **tetap ada** (persisten di SQLite). **Lolos bila** semua langkah di atas jalan.
+
+> Smoke test tanpa browser (REST + realtime): jalankan server lalu `POST /api/companies`,
+> `POST /api/companies/:id/floors`, `POST /api/floors/:floorId/departments {"templateId":"tmpl-marketing"}`,
+> `GET /api/companies/:id/world` (harus 5 agent), dan subscribe socket.io `world:subscribe` → terima `world:sync`.
+
+---
+
 ## Struktur perintah workspace
 
 ```bash
 npm run -w @vc/shared build
 npm run -w @vc/agent-runtime build
-npm run -w @vc/server dev          # start orchestrator (tsx, hot)
-npm run lint                        # eslint
+npm run -w @vc/server dev          # start orchestrator (tsx, hot) — REST + socket.io
+npm run dev:web                     # start web (Vite) di :5173
+npm run dev:server                  # alias start orchestrator
+npm run lint                        # eslint (termasuk apps/web)
 ```
 
 ## Keamanan (selalu)

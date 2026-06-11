@@ -8,7 +8,9 @@
  * Jalankan: `npm run -w @vc/server dev`  (atau lewat infra/scripts).
  */
 
-import type { VaultReader } from "@vc/shared";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import type { Id, VaultReader } from "@vc/shared";
 import {
   InMemoryMemoryStore,
   SkillRegistry,
@@ -21,6 +23,8 @@ import { ownerAuthFromEnv } from "./comms/ownerAuth.js";
 import { WaRelay } from "./comms/relay.js";
 import type { ChannelAdapter } from "./comms/types.js";
 import { createAgentReplyHandler, makeFrontDeskManager } from "./comms/frontDesk.js";
+import { ConfigStore } from "./db/store.js";
+import { RealtimeHub } from "./realtime.js";
 import { buildServer } from "./server.js";
 
 // Vault placeholder (Vault asli = Phase 4). Tidak menyimpan secret apa pun.
@@ -101,14 +105,31 @@ async function main(): Promise<void> {
     unknownReply: "Maaf, nomor Anda tidak terdaftar untuk mengakses asisten perusahaan ini.",
   });
 
-  const app = buildServer({ relay, ...(cloud ? { cloud } : {}) });
+  // Configuration layer (Phase 1): SQLite + REST + realtime.
+  const dbPath = env.DB_PATH ?? "data/vc.db";
+  if (dbPath !== ":memory:") mkdirSync(dirname(dbPath), { recursive: true });
+  const store = new ConfigStore(dbPath);
+
+  // onMutate menutup atas hub realtime (di-set setelah server.listen agar http.Server siap).
+  const realtimeRef: { hub?: RealtimeHub } = {};
+  const onMutate = (companyId: Id): void => realtimeRef.hub?.broadcastWorld(companyId);
+
+  const app = buildServer({
+    relay,
+    configStore: store,
+    onMutate,
+    ...(cloud ? { cloud } : {}),
+    ...(env.WEB_ORIGIN ? { corsOrigin: env.WEB_ORIGIN } : {}),
+  });
   const host = env.SERVER_HOST ?? "127.0.0.1";
   const port = Number(env.SERVER_PORT ?? 8787);
 
   await app.listen({ host, port });
+  realtimeRef.hub = new RealtimeHub(app.server, store, env.WEB_ORIGIN ?? true);
   console.log(`[server] listening http://${host}:${port}`);
-  console.log(`[server] adapter=${adapterMode} owners=${ownerAuth.size}`);
+  console.log(`[server] adapter=${adapterMode} owners=${ownerAuth.size} db=${dbPath}`);
   console.log(`[server] webhook: ${host}:${port}/webhook/whatsapp`);
+  console.log(`[server] REST config: ${host}:${port}/api/*  · realtime: socket.io`);
   if (adapterMode === "mock") {
     console.log(
       "[server] mode mock: balasan tidak dikirim ke WhatsApp nyata. " +

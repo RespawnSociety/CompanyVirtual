@@ -3,6 +3,7 @@
   "references": [
     { "path": "packages/shared" },
     { "path": "packages/agent-runtime" },
+    { "path": "packages/templates" },
     { "path": "apps/server" }
   ]
 }

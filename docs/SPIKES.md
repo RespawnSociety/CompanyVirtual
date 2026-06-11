@@ -119,6 +119,33 @@ Jalur HTTP/Cloud nyata: jalankan server lalu daftarkan webhook (lihat RUNBOOK).
 
 ---
 
+## Phase 1 — keputusan teknis (shell + config layer)
+
+> Bukan spike integrasi berisiko seperti Phase 0, tapi ada beberapa keputusan teknis yang
+> perlu dicatat agar konsisten ke depan.
+
+- **DB = `node:sqlite` (built-in), bukan `better-sqlite3`.** Alasan: `better-sqlite3` belum punya
+  prebuild untuk Node 25 → memaksa kompilasi native (rawan gagal di Windows). `node:sqlite` tidak
+  butuh build sama sekali. Statusnya masih "experimental" (warning di stderr) tapi API `DatabaseSync`
+  stabil untuk pemakaian kita. Isolasi di `apps/server/src/db/` — bila mau ganti driver, ubah di situ saja.
+  Catatan bind: `node:sqlite` tidak bind boolean → tidak ada kolom boolean (pakai TEXT/INTEGER).
+- **Relasi turunan tidak disimpan.** `floorIds`/`departmentIds`/`agentIds` dihitung saat baca dari tabel
+  anak (sumber kebenaran tunggal, hindari drift). Urutan deterministik: floor by `idx`, dept/agent by
+  `created_at,id`. Seed memberi `created_at = now+i` per agent agar urutan role stabil (bukan acak).
+- **Engine tetap generik.** `seedDepartmentFromTemplate` membaca `DepartmentTemplate` sebagai DATA;
+  workflow di-clone dengan id baru (dua dept dari template sama tak bentrok id). Tidak ada cabang "marketing".
+- **FACE↔ORCH:** REST (`/api/*`, Fastify) untuk CRUD config + socket.io `RealtimeHub` (room per company)
+  untuk `world:sync` (snapshot) & jalur `agent:event` (animasi, dipakai Phase 2). Kontrak realtime
+  (`WorldSnapshot`, `ServerToClientEvents`, `ClientToServerEvents`) dikunci di `@vc/shared/realtime.ts`.
+- **Web build:** Vite 7 + `@vitejs/plugin-react` 5 + React 18 + Phaser 3. Penting: samakan versi Vite
+  satu di seluruh workspace (vitest menarik Vite 7) agar tipe `Plugin` tidak bentrok antar dua salinan.
+- **Tilemap:** memuat **Tiled JSON** (`office.json`) dengan **tileset texture dibuat runtime** (Phaser
+  Graphics → generateTexture) — belum perlu aset PNG. Pathfinding `easystarjs` (dinding = blocked).
+- **CORS dev:** server kirim header CORS permissif (`WEB_ORIGIN`, default `*`); di dev web pakai Vite proxy
+  jadi same-origin. **TODO Phase 4+:** ketatkan origin di produksi.
+- **Owner-auth & approval gate tidak tersentuh** Phase 1 (tetap dari Phase 0); REST config belum punya
+  auth (lokal-only) — **TODO** sebelum expose ke jaringan.
+
 ## Kontrak yang dikunci di Phase 0
 
 - **`@vc/shared`** — sumber kebenaran tipe: data model (plan §9), `AgentEvent`, kontrak
