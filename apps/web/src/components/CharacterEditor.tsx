@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 import type { AgentProfile, ModelTier, WorldSnapshot } from "@vc/shared";
 import { api, type NewAgentInput, type SkillCatalogEntry } from "../api.js";
+import { useAsyncAction } from "../hooks/useAsyncAction.js";
 
 interface Props {
   world: WorldSnapshot | null;
@@ -50,8 +51,7 @@ const EMPTY: FormState = {
 export function CharacterEditor({ world, skills, reload }: Props): JSX.Element {
   const [departmentId, setDepartmentId] = useState("");
   const [form, setForm] = useState<FormState>(EMPTY);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, error, run } = useAsyncAction();
 
   useEffect(() => {
     if (world && !world.departments.some((d) => d.id === departmentId)) {
@@ -115,7 +115,9 @@ export function CharacterEditor({ world, skills, reload }: Props): JSX.Element {
         .filter((l) => l.length > 0)
         .map((rule) => ({ rule })),
     };
-    if (form.commsHandle.trim()) input.commsHandle = form.commsHandle.trim();
+    // CR-102: kirim commsHandle apa adanya (termasuk "" untuk meng-clear saat edit).
+    // Create: "" diabaikan server → default kosong. Edit: "" → server menghapus handle.
+    input.commsHandle = form.commsHandle.trim();
     if (form.tier || form.preferredProvider.trim()) {
       input.modelPolicy = {
         ...(form.tier ? { tier: form.tier } : {}),
@@ -125,21 +127,14 @@ export function CharacterEditor({ world, skills, reload }: Props): JSX.Element {
     return input;
   };
 
-  const save = async (): Promise<void> => {
-    setBusy(true);
-    setError(null);
-    try {
+  const save = (): Promise<void> =>
+    run(async () => {
       const input = buildInput();
       if (form.id) await api.updateAgent(form.id, input);
       else await api.createAgent(departmentId, input);
       setForm(EMPTY);
       await reload();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
+    });
 
   const canSave = form.name.trim().length > 0 && form.role.trim().length > 0;
 
@@ -181,11 +176,11 @@ export function CharacterEditor({ world, skills, reload }: Props): JSX.Element {
                     className="danger"
                     disabled={busy}
                     onClick={() =>
-                      void (async () => {
+                      void run(async () => {
                         await api.deleteAgent(a.id);
                         if (form.id === a.id) setForm(EMPTY);
                         await reload();
-                      })()
+                      })
                     }
                   >
                     Hapus

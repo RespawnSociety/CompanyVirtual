@@ -9,7 +9,7 @@
  */
 
 import { DatabaseSync } from "node:sqlite";
-import { randomUUID } from "node:crypto";
+import { defaultGenId } from "@vc/agent-runtime";
 import type {
   AgentProfile,
   Company,
@@ -64,10 +64,6 @@ export interface NewAgent {
   status?: AgentProfile["status"];
 }
 
-function newId(prefix: string): Id {
-  return `${prefix}_${randomUUID()}`;
-}
-
 function parseJson<T>(raw: unknown, fallback: T): T {
   if (typeof raw !== "string" || raw.length === 0) return fallback;
   try {
@@ -94,7 +90,7 @@ export class ConfigStore {
   // ---------------- Company ----------------
 
   createCompany(input: NewCompany, now = Date.now()): Company {
-    const id = newId("co");
+    const id = defaultGenId("co");
     this.db
       .prepare("INSERT INTO companies (id, name, branding, created_at) VALUES (?, ?, ?, ?)")
       .run(
@@ -110,7 +106,14 @@ export class ConfigStore {
     const rows = this.db
       .prepare("SELECT * FROM companies ORDER BY created_at, id")
       .all() as Record<string, unknown>[];
-    return rows.map((r) => this.rowToCompany(r));
+    // CR-104: hindari N+1 — ambil floorIds semua company dalam satu query lalu bucket.
+    const byCompany = this.childIdsByParent(
+      "floors",
+      "company_id",
+      rows.map((r) => r["id"] as Id),
+      "idx, id",
+    );
+    return rows.map((r) => this.rowToCompany(r, byCompany.get(r["id"] as Id) ?? []));
   }
 
   getCompany(id: Id): Company | undefined {
@@ -125,13 +128,13 @@ export class ConfigStore {
     return res.changes > 0;
   }
 
-  private rowToCompany(r: Record<string, unknown>): Company {
+  private rowToCompany(r: Record<string, unknown>, floorIds?: Id[]): Company {
     const id = r["id"] as Id;
     const company: Company = {
       id,
       name: r["name"] as string,
       createdAt: Number(r["created_at"]),
-      floorIds: this.floorIdsOf(id),
+      floorIds: floorIds ?? this.floorIdsOf(id),
     };
     const branding = parseJson<Record<string, unknown> | null>(r["branding"], null);
     if (branding) company.branding = branding;
@@ -145,13 +148,41 @@ export class ConfigStore {
     return rows.map((r) => r["id"] as Id);
   }
 
+  /**
+   * CR-104: ambil id anak untuk BANYAK parent sekaligus (`WHERE parent IN (...)`) lalu
+   * bucket per-parent dalam satu Map — menghindari N+1 query di jalur list/getWorldSnapshot
+   * (hot path broadcast). `table`/`parentCol`/`orderBy` adalah konstanta internal (bukan input
+   * pengguna), jadi aman diinterpolasi. Urutan anak per-parent dijaga via `ORDER BY parent, orderBy`.
+   */
+  private childIdsByParent(
+    table: string,
+    parentCol: string,
+    parentIds: Id[],
+    orderBy: string,
+  ): Map<Id, Id[]> {
+    const buckets = new Map<Id, Id[]>();
+    for (const id of parentIds) buckets.set(id, []);
+    if (parentIds.length === 0) return buckets;
+    const placeholders = parentIds.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare(
+        `SELECT id, ${parentCol} AS parent FROM ${table} ` +
+          `WHERE ${parentCol} IN (${placeholders}) ORDER BY ${parentCol}, ${orderBy}`,
+      )
+      .all(...parentIds) as Record<string, unknown>[];
+    for (const r of rows) {
+      buckets.get(r["parent"] as Id)?.push(r["id"] as Id);
+    }
+    return buckets;
+  }
+
   // ---------------- Floor ----------------
 
   createFloor(companyId: Id, input: NewFloor): Floor {
     if (!this.getCompany(companyId)) {
       throw new Error(`Company tidak ditemukan: ${companyId}`);
     }
-    const id = newId("fl");
+    const id = defaultGenId("fl");
     const index = input.index ?? this.nextFloorIndex(companyId);
     const mapKey = input.mapKey ?? "office-default";
     this.db
@@ -174,7 +205,14 @@ export class ConfigStore {
     const rows = this.db
       .prepare("SELECT * FROM floors WHERE company_id = ? ORDER BY idx, id")
       .all(companyId) as Record<string, unknown>[];
-    return rows.map((r) => this.rowToFloor(r));
+    // CR-104: departmentIds semua floor dalam satu query.
+    const byFloor = this.childIdsByParent(
+      "departments",
+      "floor_id",
+      rows.map((r) => r["id"] as Id),
+      "created_at, id",
+    );
+    return rows.map((r) => this.rowToFloor(r, byFloor.get(r["id"] as Id) ?? []));
   }
 
   getFloor(id: Id): Floor | undefined {
@@ -189,7 +227,7 @@ export class ConfigStore {
     return res.changes > 0;
   }
 
-  private rowToFloor(r: Record<string, unknown>): Floor {
+  private rowToFloor(r: Record<string, unknown>, departmentIds?: Id[]): Floor {
     const id = r["id"] as Id;
     return {
       id,
@@ -197,7 +235,7 @@ export class ConfigStore {
       name: r["name"] as string,
       index: Number(r["idx"]),
       mapKey: r["map_key"] as string,
-      departmentIds: this.departmentIdsOf(id),
+      departmentIds: departmentIds ?? this.departmentIdsOf(id),
     };
   }
 
@@ -240,7 +278,7 @@ export class ConfigStore {
     if (floor.companyId !== companyId) {
       throw new Error(`Floor ${floorId} bukan milik company ${companyId}`);
     }
-    const id = newId("dp");
+    const id = defaultGenId("dp");
     this.db
       .prepare(
         "INSERT INTO departments (id, company_id, floor_id, name, template_id, purpose, skill_pool, workflow_id, created_at) " +
@@ -271,14 +309,25 @@ export class ConfigStore {
     const rows = this.db
       .prepare("SELECT * FROM departments WHERE floor_id = ? ORDER BY created_at, id")
       .all(floorId) as Record<string, unknown>[];
-    return rows.map((r) => this.rowToDepartment(r));
+    return this.rowsToDepartments(rows);
   }
 
   listDepartmentsByCompany(companyId: Id): Department[] {
     const rows = this.db
       .prepare("SELECT * FROM departments WHERE company_id = ? ORDER BY created_at, id")
       .all(companyId) as Record<string, unknown>[];
-    return rows.map((r) => this.rowToDepartment(r));
+    return this.rowsToDepartments(rows);
+  }
+
+  /** Map baris department → Department dengan agentIds di-batch (CR-104, hindari N+1). */
+  private rowsToDepartments(rows: Record<string, unknown>[]): Department[] {
+    const byDept = this.childIdsByParent(
+      "agents",
+      "department_id",
+      rows.map((r) => r["id"] as Id),
+      "created_at, id",
+    );
+    return rows.map((r) => this.rowToDepartment(r, byDept.get(r["id"] as Id) ?? []));
   }
 
   updateDepartment(
@@ -291,7 +340,9 @@ export class ConfigStore {
       name: patch.name ?? cur.name,
       purpose: patch.purpose ?? cur.purpose,
       skillPool: patch.skillPool ?? cur.skillPool,
-      workflowId: patch.workflowId ?? cur.workflowId ?? null,
+      // CR-102: workflowId opsional & bisa dikosongkan. patch hadir (mis. "") → clear (null);
+      // absent (undefined) → pertahankan nilai lama.
+      workflowId: patch.workflowId !== undefined ? patch.workflowId || null : cur.workflowId ?? null,
     };
     this.db
       .prepare(
@@ -306,7 +357,7 @@ export class ConfigStore {
     return res.changes > 0;
   }
 
-  private rowToDepartment(r: Record<string, unknown>): Department {
+  private rowToDepartment(r: Record<string, unknown>, agentIds?: Id[]): Department {
     const id = r["id"] as Id;
     const dept: Department = {
       id,
@@ -315,7 +366,7 @@ export class ConfigStore {
       name: r["name"] as string,
       purpose: r["purpose"] as string,
       skillPool: parseJson<string[]>(r["skill_pool"], []),
-      agentIds: this.agentIdsOf(id),
+      agentIds: agentIds ?? this.agentIdsOf(id),
     };
     const templateId = r["template_id"] as string | null;
     if (templateId) dept.templateId = templateId;
@@ -337,7 +388,7 @@ export class ConfigStore {
     if (!this.getDepartment(departmentId)) {
       throw new Error(`Department tidak ditemukan: ${departmentId}`);
     }
-    const id = input.id ?? newId("ag");
+    const id = input.id ?? defaultGenId("ag");
     const memoryNamespace = input.memoryNamespace ?? `agent:${id}`;
     const status = input.status ?? "idle";
     this.db
@@ -420,7 +471,8 @@ export class ConfigStore {
         next.description,
         JSON.stringify(next.skillScope),
         JSON.stringify(next.guardrails),
-        next.commsHandle ?? null,
+        // CR-102: commsHandle "" (clear via PATCH) → simpan NULL, konsisten dgn createAgent.
+        next.commsHandle || null,
         next.modelPolicy ? JSON.stringify(next.modelPolicy) : null,
         next.memoryNamespace,
         next.status,

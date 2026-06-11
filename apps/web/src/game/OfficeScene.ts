@@ -13,10 +13,12 @@ import Phaser from "phaser";
 import EasyStar from "easystarjs";
 import type { AgentProfile, WorldSnapshot } from "@vc/shared";
 import { TILE, TILE_COLORS, colorForSprite } from "./sprites.js";
+import { DEFAULT_MAP_KEY, isKnownMapKey, mapPathFor } from "./maps.js";
 
 const TILESET_TEX = "tiles-gen";
 const CHAR_TEX = "char-gen";
-const MAP_KEY = "office-map";
+// Cache key Phaser untuk tilemap yang dimuat (bukan Floor.mapKey — itu di registry maps.ts).
+const MAP_CACHE_KEY = "office-map";
 
 interface CharObj {
   container: Phaser.GameObjects.Container;
@@ -42,18 +44,23 @@ export class OfficeScene extends Phaser.Scene {
   private clockText!: Phaser.GameObjects.Text;
   private minutes = 9 * 60; // mulai 09:00
 
+  // mapKey lantai yang sedang dirender (CR-103). Dipakai untuk mendeteksi permintaan
+  // ganti map antar-lantai (Phase 5) tanpa men-spam peringatan tiap snapshot.
+  private renderedMapKey = DEFAULT_MAP_KEY;
+
   constructor() {
     super("office");
   }
 
   preload(): void {
-    this.load.tilemapTiledJSON(MAP_KEY, "assets/maps/office.json");
+    // Path map data-driven dari registry (bukan string hardcode); default Phase 1 = office.json.
+    this.load.tilemapTiledJSON(MAP_CACHE_KEY, mapPathFor(DEFAULT_MAP_KEY));
   }
 
   create(): void {
     this.makeTextures();
 
-    const map = this.make.tilemap({ key: MAP_KEY });
+    const map = this.make.tilemap({ key: MAP_CACHE_KEY });
     const tileset = map.addTilesetImage("office", TILESET_TEX);
     if (tileset) {
       const layer = map.createLayer("ground", tileset, 0, 0);
@@ -108,6 +115,9 @@ export class OfficeScene extends Phaser.Scene {
       return;
     }
     const targetFloor = floorId ?? snapshot.floors[0]?.id;
+    // CR-103: konsumsi Floor.mapKey. Phase 1 hanya satu aset map; bila lantai meminta map
+    // lain, beri tahu sekali (render tetap pakai map default sampai multi-map = Phase 5).
+    this.ensureMapForFloor(snapshot.floors.find((f) => f.id === targetFloor)?.mapKey);
     const deptOnFloor = new Set(
       snapshot.departments.filter((d) => d.floorId === targetFloor).map((d) => d.id),
     );
@@ -148,6 +158,24 @@ export class OfficeScene extends Phaser.Scene {
   }
 
   // ---------------- internal ----------------
+
+  /**
+   * Selaraskan render dengan mapKey lantai aktif (CR-103). Phase 1 hanya punya satu aset map,
+   * jadi permintaan map berbeda hanya dicatat sekali (per perubahan key) — bukan diabaikan diam-diam.
+   * Pergantian/penambahan map antar-lantai saat runtime = Phase 5.
+   */
+  private ensureMapForFloor(mapKey: string | undefined): void {
+    const desired = mapKey ?? DEFAULT_MAP_KEY;
+    if (desired === this.renderedMapKey) return;
+    this.renderedMapKey = desired;
+    if (desired !== DEFAULT_MAP_KEY) {
+      const known = isKnownMapKey(desired) ? "terdaftar tapi" : "belum terdaftar dan";
+      console.warn(
+        `[OfficeScene] lantai meminta mapKey '${desired}' (${known} belum bisa di-render runtime). ` +
+          `Tetap render '${DEFAULT_MAP_KEY}' — multi-map antar-lantai = Phase 5.`,
+      );
+    }
+  }
 
   private makeTextures(): void {
     if (!this.textures.exists(TILESET_TEX)) {
@@ -235,12 +263,20 @@ export class OfficeScene extends Phaser.Scene {
     this.easystar.findPath(obj.tile.x, obj.tile.y, tx, ty, (path) => {
       if (!path || path.length < 2) return;
       obj.active?.stop();
+      // CR-107: jangan set obj.tile ke tujuan secara sinkron (tween ~per-petak masih jalan).
+      // Update tile logis tiap petak tercapai → seleksi/HUD akurat selama karakter berjalan,
+      // dan re-route di tengah jalan berangkat dari petak terakhir yang benar-benar dicapai.
       const steps = path.slice(1).map((node) => {
         const { wx, wy } = this.tileToWorld(node.x, node.y);
-        return { x: wx, y: wy, duration: 170 };
+        return {
+          x: wx,
+          y: wy,
+          duration: 170,
+          onComplete: () => {
+            obj.tile = { x: node.x, y: node.y };
+          },
+        };
       });
-      const last = path[path.length - 1]!;
-      obj.tile = { x: last.x, y: last.y };
       obj.active = this.tweens.chain({ targets: obj.container, tweens: steps });
     });
     this.easystar.calculate();

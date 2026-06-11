@@ -6,6 +6,7 @@
 import { useState } from "react";
 import type { Company, WorldSnapshot } from "@vc/shared";
 import { api } from "../api.js";
+import { useAsyncAction } from "../hooks/useAsyncAction.js";
 
 interface Props {
   companies: Company[];
@@ -25,20 +26,7 @@ export function CompanySetup({
   const [name, setName] = useState("");
   const [color, setColor] = useState("#4f7cff");
   const [floorName, setFloorName] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const run = async (fn: () => Promise<void>): Promise<void> => {
-    setBusy(true);
-    setError(null);
-    try {
-      await fn();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
+  const { busy, error, run } = useAsyncAction();
 
   const createCompany = (): Promise<void> =>
     run(async () => {

@@ -31,7 +31,12 @@ export class RealtimeHub {
     this.io = new IoServer(httpServer, { cors: { origin: corsOrigin } });
     this.io.on("connection", (socket) => {
       socket.on("world:subscribe", (companyId: Id) => {
-        void socket.join(room(companyId));
+        const target = room(companyId);
+        // CR-108: subscribe idempoten — tinggalkan room company lain agar satu socket tak
+        // menumpuk di >1 room company (cegah broadcast/snapshot ganda saat ganti company cepat).
+        const stale = [...socket.rooms].filter((r) => r.startsWith("company:") && r !== target);
+        for (const r of stale) void socket.leave(r);
+        void socket.join(target);
         const snap = this.store.getWorldSnapshot(companyId);
         if (snap) socket.emit("world:sync", snap);
       });

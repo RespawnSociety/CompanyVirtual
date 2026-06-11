@@ -50,14 +50,17 @@ export function App(): JSX.Element {
     return list;
   }, []);
 
-  // Daftar company di awal; auto-pilih bila belum ada pilihan tersimpan.
+  // Daftar company di awal.
   useEffect(() => {
-    refreshCompanies()
-      .then((list) => {
-        setCompanyId((cur) => (cur && list.some((c) => c.id === cur) ? cur : list[0]?.id ?? null));
-      })
-      .catch(() => undefined);
+    refreshCompanies().catch(() => undefined);
   }, [refreshCompanies]);
+
+  // BUG-109: rekonsiliasi company terpilih tiap daftar berubah (mount, buat, hapus).
+  // Bila pilihan aktif sudah tak ada (mis. baru dihapus), pindah ke company lain / null —
+  // updater fungsional memakai nilai terbaru, jadi tak menabrak pilihan yang baru di-set.
+  useEffect(() => {
+    setCompanyId((cur) => (cur && companies.some((c) => c.id === cur) ? cur : companies[0]?.id ?? null));
+  }, [companies]);
 
   // Simpan pilihan + muat world (REST) tiap company berganti.
   useEffect(() => {
@@ -96,8 +99,10 @@ export function App(): JSX.Element {
   }, [companyId]);
 
   const reload = useCallback(async (): Promise<void> => {
-    await refreshCompanies();
-    if (companyId) {
+    const list = await refreshCompanies();
+    // Refresh snapshot hanya bila company aktif masih ada (mutasi tanpa ganti company).
+    // Bila company aktif baru dihapus (BUG-109), effect rekonsiliasi + world-loader yang memuat ulang.
+    if (companyId && list.some((c) => c.id === companyId)) {
       try {
         setWorld(await api.getWorld(companyId));
       } catch {

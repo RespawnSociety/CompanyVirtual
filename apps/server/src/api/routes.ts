@@ -7,7 +7,7 @@
  */
 
 import type { FastifyInstance, FastifyReply } from "fastify";
-import type { Guardrail, Id, ModelPolicy, Vec2 } from "@vc/shared";
+import type { AgentStatus, Guardrail, Id, ModelPolicy, Vec2 } from "@vc/shared";
 import {
   getDepartmentTemplate,
   listDepartmentTemplates,
@@ -39,6 +39,13 @@ function asVec2(v: unknown): Vec2 | undefined {
   const o = v as Record<string, unknown>;
   if (typeof o["x"] !== "number" || typeof o["y"] !== "number") return undefined;
   return { x: o["x"], y: o["y"] };
+}
+/** BUG-106: hanya terima nilai dalam union AgentStatus (`@vc/shared`); selain itu undefined. */
+const AGENT_STATUSES: readonly AgentStatus[] = ["idle", "working", "talking", "blocked"];
+function asAgentStatus(v: unknown): AgentStatus | undefined {
+  return typeof v === "string" && (AGENT_STATUSES as readonly string[]).includes(v)
+    ? (v as AgentStatus)
+    : undefined;
 }
 
 export function registerConfigRoutes(
@@ -151,6 +158,8 @@ export function registerConfigRoutes(
     if (!floor) return notFound(reply, `Floor tidak ditemukan: ${floorId}`);
     const body = (req.body ?? {}) as Record<string, unknown>;
     const templateId = asStr(body["templateId"]);
+    const name = asStr(body["name"]);
+    const purpose = asStr(body["purpose"]);
 
     if (templateId) {
       const template = getDepartmentTemplate(templateId);
@@ -159,16 +168,14 @@ export function registerConfigRoutes(
         companyId: floor.companyId,
         floorId,
         template,
-        ...(asStr(body["name"]) ? { name: asStr(body["name"])! } : {}),
-        ...(asStr(body["purpose"]) ? { purpose: asStr(body["purpose"])! } : {}),
+        ...(name ? { name } : {}),
+        ...(purpose ? { purpose } : {}),
       });
       notify(floor.companyId);
       return reply.code(201).send(seeded);
     }
 
     // Custom (tanpa template).
-    const name = asStr(body["name"]);
-    const purpose = asStr(body["purpose"]);
     if (!name || !purpose) {
       return bad(reply, "Departemen custom butuh 'name' dan 'purpose' (atau beri 'templateId').");
     }
@@ -196,10 +203,15 @@ export function registerConfigRoutes(
     if (!cur) return notFound(reply, `Department tidak ditemukan: ${id}`);
     const body = (req.body ?? {}) as Record<string, unknown>;
     const patch: Parameters<ConfigStore["updateDepartment"]>[1] = {};
-    if (asStr(body["name"])) patch.name = asStr(body["name"])!;
-    if (asStr(body["purpose"])) patch.purpose = asStr(body["purpose"])!;
-    if (asStrArray(body["skillPool"])) patch.skillPool = asStrArray(body["skillPool"])!;
-    if (asStr(body["workflowId"])) patch.workflowId = asStr(body["workflowId"])!;
+    const name = asStr(body["name"]);
+    if (name) patch.name = name;
+    const purpose = asStr(body["purpose"]);
+    if (purpose) patch.purpose = purpose;
+    const skillPool = asStrArray(body["skillPool"]);
+    if (skillPool) patch.skillPool = skillPool;
+    // CR-102: workflowId opsional & bisa dikosongkan — kirim apa adanya bila key hadir
+    // (string kosong → store meng-clear jadi null); absent → tak diubah.
+    if ("workflowId" in body) patch.workflowId = asStr(body["workflowId"]) ?? "";
     const updated = store.updateDepartment(id, patch);
     notify(cur.companyId);
     return updated;
@@ -240,6 +252,7 @@ export function registerConfigRoutes(
     const name = asStr(body["name"]);
     const role = asStr(body["role"]);
     if (!name || !role) return bad(reply, "Agent butuh 'name' dan 'role'.");
+    const commsHandle = asStr(body["commsHandle"]);
     const input: NewAgent = {
       name,
       role,
@@ -248,7 +261,7 @@ export function registerConfigRoutes(
       description: asStr(body["description"]) ?? "",
       skillScope: asStrArray(body["skillScope"]) ?? [],
       guardrails: Array.isArray(body["guardrails"]) ? (body["guardrails"] as Guardrail[]) : [],
-      ...(asStr(body["commsHandle"]) ? { commsHandle: asStr(body["commsHandle"])! } : {}),
+      ...(commsHandle ? { commsHandle } : {}),
       ...(typeof body["modelPolicy"] === "object" && body["modelPolicy"] !== null
         ? { modelPolicy: body["modelPolicy"] as ModelPolicy }
         : {}),
@@ -264,18 +277,29 @@ export function registerConfigRoutes(
     if (!cur) return notFound(reply, `Agent tidak ditemukan: ${id}`);
     const body = (req.body ?? {}) as Record<string, unknown>;
     const patch: Partial<NewAgent> = {};
-    if (asStr(body["name"])) patch.name = asStr(body["name"])!;
-    if (asStr(body["role"])) patch.role = asStr(body["role"])!;
-    if (asVec2(body["deskPos"])) patch.deskPos = asVec2(body["deskPos"])!;
-    if (asStr(body["spriteKey"])) patch.spriteKey = asStr(body["spriteKey"])!;
+    const name = asStr(body["name"]);
+    if (name) patch.name = name;
+    const role = asStr(body["role"]);
+    if (role) patch.role = role;
+    const deskPos = asVec2(body["deskPos"]);
+    if (deskPos) patch.deskPos = deskPos;
+    const spriteKey = asStr(body["spriteKey"]);
+    if (spriteKey) patch.spriteKey = spriteKey;
     if (typeof body["description"] === "string") patch.description = body["description"];
-    if (asStrArray(body["skillScope"])) patch.skillScope = asStrArray(body["skillScope"])!;
+    const skillScope = asStrArray(body["skillScope"]);
+    if (skillScope) patch.skillScope = skillScope;
     if (Array.isArray(body["guardrails"])) patch.guardrails = body["guardrails"] as Guardrail[];
-    if (asStr(body["commsHandle"])) patch.commsHandle = asStr(body["commsHandle"])!;
+    // CR-102: commsHandle opsional & bisa dikosongkan — key hadir (mis. "") → clear; absent → tetap.
+    if ("commsHandle" in body) patch.commsHandle = asStr(body["commsHandle"]) ?? "";
     if (typeof body["modelPolicy"] === "object" && body["modelPolicy"] !== null) {
       patch.modelPolicy = body["modelPolicy"] as ModelPolicy;
     }
-    if (asStr(body["status"])) patch.status = asStr(body["status"]) as NewAgent["status"];
+    // BUG-106: validasi enum — key hadir tapi nilai di luar AgentStatus → 400 (jangan simpan).
+    if ("status" in body) {
+      const status = asAgentStatus(body["status"]);
+      if (!status) return bad(reply, "Field 'status' harus salah satu: idle|working|talking|blocked.");
+      patch.status = status;
+    }
     const updated = store.updateAgent(id, patch);
     const dept = store.getDepartment(cur.departmentId);
     notify(dept?.companyId);

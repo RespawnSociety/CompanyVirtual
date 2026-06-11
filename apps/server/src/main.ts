@@ -110,9 +110,29 @@ async function main(): Promise<void> {
   if (dbPath !== ":memory:") mkdirSync(dirname(dbPath), { recursive: true });
   const store = new ConfigStore(dbPath);
 
-  // onMutate menutup atas hub realtime (di-set setelah server.listen agar http.Server siap).
+  // onMutate menutup atas hub realtime (hub di-set sebelum listen — lihat CR-108 di bawah).
   const realtimeRef: { hub?: RealtimeHub } = {};
   const onMutate = (companyId: Id): void => realtimeRef.hub?.broadcastWorld(companyId);
+
+  const host = env.SERVER_HOST ?? "127.0.0.1";
+  const port = Number(env.SERVER_PORT ?? 8787);
+
+  // CR-101: REST `/api/*` tak punya auth sendiri. Token bearer (API_AUTH_TOKEN) menutupnya.
+  // Bila server di-bind ke alamat non-loopback (terjangkau jaringan) TANPA token → tolak start
+  // (least-privilege, plan §8). Lokal (127.0.0.1/::1) tanpa token tetap boleh untuk dev.
+  const apiAuthToken = env.API_AUTH_TOKEN?.trim() || undefined;
+  if (!apiAuthToken && !isLoopbackHost(host)) {
+    throw new Error(
+      `Server bind ke host non-loopback '${host}' tanpa API_AUTH_TOKEN. ` +
+        "REST /api/* akan terbuka tanpa auth. Set API_AUTH_TOKEN di .env sebelum expose ke jaringan.",
+    );
+  }
+  if (!apiAuthToken) {
+    console.warn(
+      "[server] PERINGATAN: API_AUTH_TOKEN kosong — REST /api/* TERBUKA (tanpa auth). " +
+        "Aman hanya untuk dev lokal (bind loopback). Set token sebelum hosting non-lokal.",
+    );
+  }
 
   const app = buildServer({
     relay,
@@ -120,14 +140,18 @@ async function main(): Promise<void> {
     onMutate,
     ...(cloud ? { cloud } : {}),
     ...(env.WEB_ORIGIN ? { corsOrigin: env.WEB_ORIGIN } : {}),
+    ...(apiAuthToken ? { apiAuthToken } : {}),
   });
-  const host = env.SERVER_HOST ?? "127.0.0.1";
-  const port = Number(env.SERVER_PORT ?? 8787);
+
+  // CR-108: buat hub SEBELUM listen agar tidak ada celah di mana mutasi → broadcast no-op
+  // (app.server sudah ada sejak Fastify dibangun; socket.io boleh attach sebelum listen).
+  realtimeRef.hub = new RealtimeHub(app.server, store, env.WEB_ORIGIN ?? true);
 
   await app.listen({ host, port });
-  realtimeRef.hub = new RealtimeHub(app.server, store, env.WEB_ORIGIN ?? true);
   console.log(`[server] listening http://${host}:${port}`);
-  console.log(`[server] adapter=${adapterMode} owners=${ownerAuth.size} db=${dbPath}`);
+  console.log(
+    `[server] adapter=${adapterMode} owners=${ownerAuth.size} db=${dbPath} apiAuth=${apiAuthToken ? "on" : "off"}`,
+  );
   console.log(`[server] webhook: ${host}:${port}/webhook/whatsapp`);
   console.log(`[server] REST config: ${host}:${port}/api/*  · realtime: socket.io`);
   if (adapterMode === "mock") {
@@ -143,6 +167,12 @@ function required(value: string | undefined, name: string): string {
     throw new Error(`Env ${name} wajib diisi untuk WA_ADAPTER=cloud`);
   }
   return value.trim();
+}
+
+/** True bila host hanya terjangkau dari mesin lokal (tak terekspos ke jaringan). */
+function isLoopbackHost(host: string): boolean {
+  const h = host.trim().toLowerCase();
+  return h === "127.0.0.1" || h === "localhost" || h === "::1" || h === "[::1]";
 }
 
 main().catch((err) => {

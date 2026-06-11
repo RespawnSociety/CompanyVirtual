@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 import type { DepartmentTemplate, WorldSnapshot } from "@vc/shared";
 import { api, type SkillCatalogEntry } from "../api.js";
+import { useAsyncAction } from "../hooks/useAsyncAction.js";
 
 interface Props {
   world: WorldSnapshot | null;
@@ -23,8 +24,7 @@ export function DepartmentBuilder({ world, templates, skills, reload }: Props): 
   const [name, setName] = useState("");
   const [purpose, setPurpose] = useState("");
   const [skillPool, setSkillPool] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, error, run } = useAsyncAction();
 
   useEffect(() => {
     if (world && !world.floors.some((f) => f.id === floorId)) {
@@ -54,10 +54,8 @@ export function DepartmentBuilder({ world, templates, skills, reload }: Props): 
   const toggleSkill = (s: string): void =>
     setSkillPool((cur) => (cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]));
 
-  const create = async (): Promise<void> => {
-    setBusy(true);
-    setError(null);
-    try {
+  const create = (): Promise<void> =>
+    run(async () => {
       if (mode === "template") {
         await api.createDepartment(floorId, {
           templateId,
@@ -74,17 +72,13 @@ export function DepartmentBuilder({ world, templates, skills, reload }: Props): 
       setPurpose("");
       setSkillPool([]);
       await reload();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
+    });
 
   const canCreate =
     mode === "template" ? !!templateId : name.trim().length > 0 && purpose.trim().length > 0;
 
   const deptsOnFloor = world.departments.filter((d) => d.floorId === floorId);
+  const selectedTemplate = templates.find((t) => t.id === templateId);
 
   return (
     <>
@@ -125,10 +119,10 @@ export function DepartmentBuilder({ world, templates, skills, reload }: Props): 
                 </option>
               ))}
             </select>
-            {templates.find((t) => t.id === templateId) && (
+            {selectedTemplate && (
               <p className="hint">
-                {templates.find((t) => t.id === templateId)!.description} — akan men-seed{" "}
-                {templates.find((t) => t.id === templateId)!.roleTemplates.length} karakter + workflow.
+                {selectedTemplate.description} — akan men-seed{" "}
+                {selectedTemplate.roleTemplates.length} karakter + workflow.
               </p>
             )}
             <label>Nama departemen (opsional, default nama template)</label>
@@ -194,10 +188,10 @@ export function DepartmentBuilder({ world, templates, skills, reload }: Props): 
                     className="danger"
                     disabled={busy}
                     onClick={() =>
-                      void (async () => {
+                      void run(async () => {
                         await api.deleteDepartment(d.id);
                         await reload();
-                      })()
+                      })
                     }
                   >
                     Hapus

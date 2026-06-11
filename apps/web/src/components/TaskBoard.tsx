@@ -27,13 +27,29 @@ export function TaskBoard({ companyId }: { companyId: string | null }): JSX.Elem
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    if (!companyId) return;
+    if (!companyId) {
+      setTasks([]);
+      setLoaded(false);
+      return;
+    }
+    // CR-109: bersihkan data lama + guard ignore agar respons company lama tak menimpa yang baru.
+    setTasks([]);
     setLoaded(false);
+    let ignore = false;
     api
       .listTasks(companyId)
-      .then((t) => setTasks(t))
-      .catch(() => setTasks([]))
-      .finally(() => setLoaded(true));
+      .then((t) => {
+        if (!ignore) setTasks(t);
+      })
+      .catch(() => {
+        if (!ignore) setTasks([]);
+      })
+      .finally(() => {
+        if (!ignore) setLoaded(true);
+      });
+    return () => {
+      ignore = true;
+    };
   }, [companyId]);
 
   if (!companyId) {

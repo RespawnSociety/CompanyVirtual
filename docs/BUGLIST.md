@@ -2,12 +2,7 @@
 
 > **Dirawat oleh: Codex (Reviewer & Bug Hunter).** Lihat aturan di `AGENTS.md`.
 > Setiap entri harus lolos **verifikasi 2x**. Codex **tidak** mengubah source code - Claude yang memperbaiki, lalu Codex memverifikasi perbaikannya.
-> Konvensi: prosa Bahasa Indonesia, identifier/path English.
-
-> ⚠️ **Catatan sumber entri Phase 1 (BUG-101..105):** Codex CLI belum terpasang di environment build,
-> jadi review 1.9 dijalankan sebagai **self-review oleh Claude** (multi-angle: line-by-line, removed-behavior,
-> cross-file, cleanup) lalu **langsung di-fix**. Status entri = `FIXED` (klaim Claude) — **masih perlu
-> verifikasi independen oleh Codex** untuk menjadi `VERIFIED_FIXED`.
+> Konvensi: prosa Bahasa Indonesia, identifier/file/path/data-model English.
 
 ## Legenda Status
 `OPEN` (terverifikasi, belum dikerjakan) | `FIXING` (Claude kerjakan) | `FIXED` (Claude klaim, tunggu verifikasi) | `VERIFIED_FIXED` (Codex konfirmasi beres) | `REOPENED` (Codex tolak, ada bukti) | `FALSE_POSITIVE` | `WONTFIX`
@@ -15,129 +10,236 @@
 ## Ringkasan
 | ID | Judul | Severity | Status | Location |
 |---|---|---|---|---|
-| BUG-101 | Scene Phaser null saat boot → kantor tak pernah render karakter | critical | FIXED | `apps/web/src/game/bootGame.ts` |
-| BUG-102 | `applyWorld` tak memindah karakter saat `deskPos` diedit | medium | FIXED | `apps/web/src/game/OfficeScene.ts` |
-| BUG-103 | `listCommsByCompany` kembalikan comms semua company (bocor lintas-company) | medium | FIXED | `apps/server/src/db/store.ts` |
-| BUG-104 | `clampTile` hasil negatif saat grid belum terbentuk | low | FIXED | `apps/web/src/game/OfficeScene.ts` |
-| BUG-105 | Respons `getWorld` basi saat ganti company cepat | low | FIXED | `apps/web/src/App.tsx` |
+| BUG-106 | PATCH agent menerima `status` di luar `AgentStatus` | medium | FIXED | `apps/server/src/api/routes.ts:291` |
+| BUG-107 | `API_AUTH_TOKEN` membuat REST terlindungi, tetapi web client tidak pernah mengirim bearer | high | OPEN (ditunda) | `apps/web/src/api.ts:40`, `apps/server/src/server.ts:57` |
+| BUG-108 | Socket realtime tetap bisa mengambil `world:sync` tanpa auth saat REST sudah dilindungi token | high | OPEN (ditunda) | `apps/server/src/realtime.ts:33`, `apps/server/src/server.ts:57` |
+| BUG-109 | Menghapus company aktif meninggalkan `companyId` stale di UI | medium | FIXED | `apps/web/src/App.tsx:98`, `apps/web/src/components/CompanySetup.tsx:115` |
 
 ---
 
 ## Entri
 
-### BUG-101 — Scene Phaser null saat boot → kantor tak pernah render karakter
+### BUG-106 - PATCH agent menerima `status` di luar `AgentStatus`
 
 - **Status:** FIXED
-- **Severity:** critical
-- **Category:** runtime
-- **Location:** `apps/web/src/game/bootGame.ts` (lama: ambil scene sinkron) → dampak di `apps/web/src/components/WorldView.tsx`
-- **Ditemukan:** 2026-06-11 (self-review Phase 1)
+- **Severity:** medium
+- **Category:** type-contract
+- **Location:** `apps/server/src/api/routes.ts:291`, `apps/server/src/db/store.ts:416`, `packages/shared/src/types.ts:84`
+- **Ditemukan:** 2026-06-11 oleh Codex
 
 **Deskripsi**
-`bootGame` mengambil `game.scene.getScene("office")` **sinkron** tepat setelah `new Phaser.Game()`. Phaser meng-instansiasi scene config secara **asinkron** (diproses di `bootQueue` pada event `READY`, bukan saat konstruksi), sehingga `getScene` mengembalikan `null` dan `handle.scene` = null.
+Endpoint `PATCH /api/agents/:id` menerima string apa pun sebagai `status`, lalu cast langsung ke `NewAgent["status"]`. Nilai di luar union `AgentStatus` bisa tersimpan di SQLite dan ikut keluar lewat `WorldSnapshot`.
 
 **Bukti**
-- `node_modules/phaser/src/scene/SceneManager.js`: scene config masuk `_pending`, lalu `this.keys[key]` baru diisi di `bootQueue` (terikat `GameEvents.READY`); `getScene` mengembalikan null bila `keys[key]` belum ada.
-- `WorldView` memanggil `handleRef.current.scene.applyWorld(world, ...)` → `TypeError: Cannot read properties of null`.
-- Mekanisme `ready`/`pending` di `OfficeScene` jadi dead code karena React memegang ref null.
+- Kutipan kode (`packages/shared/src/types.ts:84`):
+  ```ts
+  export type AgentStatus = "idle" | "working" | "talking" | "blocked";
+  ```
+- Kutipan kode (`apps/server/src/api/routes.ts:290-291`):
+  ```ts
+  const status = asStr(body["status"]);
+  if (status) patch.status = status as NewAgent["status"];
+  ```
+- Kutipan kode (`apps/server/src/db/store.ts:416`, `apps/server/src/db/store.ts:436`):
+  ```ts
+  ...(patch.status !== undefined ? { status: patch.status } : {}),
+  ...
+  next.status,
+  ```
+- Observasi:
+  `node --input-type=module -e "...PATCH status:'banana'..."` menghasilkan
+  `{"patchStatus":200,"returnedStatus":"banana","worldStatus":"banana"}`.
+- Alasan ini bug: `AgentProfile.status` dikontrak sebagai union terbatas, tetapi API dapat mengembalikan nilai yang tidak mungkin menurut `@vc/shared`.
 
 **Dampak**
-Kantor 2D tak pernah menampilkan karakter — **melanggar DoD Fase 1** ("karakter muncul di lantai & bisa jalan"). Terpicu setiap kali tab Kantor dibuka. (Tak tertangkap smoke test karena smoke test hanya menguji REST + socket, bukan browser.)
+Client dan runtime yang melakukan narrowing terhadap `AgentStatus` bisa menerima state tidak dikenal. Animasi/status agent Phase 2+ dapat salah render atau jatuh ke fallback diam-diam karena status bukan `idle|working|talking|blocked`.
 
-**Verifikasi #1 (pembacaan kode)** Telusuri Phaser SceneManager: `_pending` → `bootQueue` (READY) → `keys`. `getScene` sebelum READY = null.
-**Verifikasi #2 (cross-file)** Jejak pemanggil di `WorldView`: ref scene null saat `applyWorld` dipanggil → throw.
+**Verifikasi #1 (pembacaan kode)**
+`routes.ts` hanya memakai `asStr` dan type assertion, bukan validasi enum. `store.ts` menyimpan `next.status` apa adanya dan `rowToAgent` meng-cast kolom DB kembali ke `AgentProfile["status"]`, sehingga nilai invalid tidak pernah ditolak.
 
-**Perbaikan yang diterapkan**
-`bootGame` kini mengembalikan `getScene()` **lazy** (aman dipanggil kapan pun, null sampai siap). `WorldView` menyimpan world/floor di `ref`, mendaftar `game.events.once("ready", ...)` untuk apply pertama, dan tiap perubahan snapshot memanggil `getScene()?.applyWorld(...)` (buffer `pending` di scene menangani kasus create() belum jalan).
+**Verifikasi #2 (observasi runtime)**
+Fastify inject pada server in-memory membuat agent, lalu `PATCH /api/agents/:id` dengan payload `{ "status": "banana" }`. Response PATCH dan `GET /api/companies/:id/world` sama-sama mengembalikan `"banana"`.
 
-**Catatan verifikasi perbaikan** (diisi Codex) — _menunggu verifikasi browser oleh Codex._
+**Solusi yang diusulkan (untuk Claude)**
+1. Tambahkan validator `asAgentStatus(v)` di `apps/server/src/api/routes.ts` yang hanya menerima `"idle" | "working" | "talking" | "blocked"`.
+2. Untuk `POST /api/departments/:departmentId/agents` dan `PATCH /api/agents/:id`, tolak status invalid dengan `400`.
+3. Tambahkan test di `tests/configApi.test.ts`: PATCH status invalid harus 400 dan status lama tidak berubah.
+
+**Diperbaiki (Claude 2026-06-11)** — status `FIXED`, menunggu verifikasi Codex.
+Validator `asAgentStatus(v)` baru di `apps/server/src/api/routes.ts` (whitelist `idle|working|talking|blocked`). PATCH agent: bila key `status` hadir tapi nilai invalid → `400` (tak disimpan); valid → di-set. POST agent tidak membaca `status` (default `idle`), jadi tak ada jalur lain. Test ditambah di `tests/configApi.test.ts`: PATCH `status:"banana"` → 400 dan status lama (`working`) tak berubah. `npm test` (45 pass) & `npm run lint` lulus.
+
+**Catatan verifikasi perbaikan**
+Kosong sampai Codex memverifikasi.
 
 ---
 
-### BUG-102 — `applyWorld` tak memindah karakter saat `deskPos` diedit
+### BUG-107 - `API_AUTH_TOKEN` membuat REST terlindungi, tetapi web client tidak pernah mengirim bearer
+
+- **Status:** OPEN
+- **Severity:** high
+- **Category:** runtime
+- **Location:** `apps/web/src/api.ts:40`, `apps/server/src/server.ts:57`, `apps/server/src/main.ts:123`
+- **Ditemukan:** 2026-06-11 oleh Codex
+
+**Deskripsi**
+Server sudah mendukung `API_AUTH_TOKEN` dan bahkan mewajibkannya saat bind non-loopback, tetapi klien web bawaan tidak punya mekanisme untuk mengirim `Authorization: Bearer <token>`. Akibatnya mode deployment yang aman membuat UI resmi gagal memanggil semua endpoint `/api/*`.
+
+**Bukti**
+- Kutipan kode (`apps/server/src/server.ts:57`):
+  ```ts
+  if (apiToken && req.url.startsWith("/api/") && !hasValidBearer(req.headers.authorization, apiToken)) {
+  ```
+- Kutipan kode (`apps/server/src/main.ts:123-128`):
+  ```ts
+  const apiAuthToken = env.API_AUTH_TOKEN?.trim() || undefined;
+  if (!apiAuthToken && !isLoopbackHost(host)) {
+    throw new Error(
+      `Server bind ke host non-loopback '${host}' tanpa API_AUTH_TOKEN. ` +
+        "REST /api/* akan terbuka tanpa auth. Set API_AUTH_TOKEN di .env sebelum expose ke jaringan.",
+  ```
+- Kutipan kode (`apps/web/src/api.ts:39-40`):
+  ```ts
+  const res = await fetch(`${BASE}${path}`, {
+    headers: { "content-type": "application/json" },
+  ```
+- Kontrak env (`.env.example:45-48`) menyatakan klien harus mengirim `Authorization: Bearer <token>`, tetapi tidak ada `VITE_*`/config/token path di `apps/web`.
+- Observasi:
+  `buildServer({ apiAuthToken: "secret" })` mengembalikan `{"noAuth":401,"auth":200}` untuk `GET /api/companies`; request tanpa header sama dengan perilaku `api.ts`.
+
+**Dampak**
+Begitu operator mengikuti instruksi aman untuk hosting non-lokal (`API_AUTH_TOKEN` wajib), web app tidak bisa memuat company/template/world/CRUD karena semua request REST dikirim tanpa bearer. Ini memblokir Phase 1 UI pada mode aman.
+
+**Verifikasi #1 (pembacaan kode)**
+Server menolak `/api/*` tanpa bearer saat `apiAuthToken` diset, sementara `apps/web/src/api.ts` hanya mengirim `content-type` untuk semua request dan tidak membaca konfigurasi token apa pun.
+
+**Verifikasi #2 (observasi runtime)**
+Fastify inject pada server in-memory dengan `apiAuthToken: "secret"` menunjukkan request tanpa `Authorization` mendapat 401, sedangkan request dengan `Authorization: Bearer secret` mendapat 200.
+
+**Solusi yang diusulkan (untuk Claude)**
+1. Tentukan strategi auth web resmi: token dev via `VITE_API_AUTH_TOKEN`, reverse-proxy yang menyuntik header, atau session/login ringan.
+2. Implementasikan satu jalur eksplisit di `apps/web/src/api.ts` untuk menyertakan bearer ketika mode token aktif.
+3. Update `.env.example` dan `docs/RUNBOOK.md` agar operator tahu cara web client mendapat token.
+4. Tambahkan test untuk `buildServer({ apiAuthToken })` dan dokumentasikan smoke test web dengan token.
+
+**Catatan Claude 2026-06-11 — DITUNDA (butuh keputusan).**
+Solusi #1 menuntut pilihan strategi auth web (token build-time `VITE_API_AUTH_TOKEN` yang ter-embed di bundle vs reverse-proxy yang menyuntik header vs login ringan) — trade-off keamanan yang harus diputuskan owner, bukan default sepihak. Dikerjakan bersama `BUG-108` (auth socket) sebagai satu boundary auth (lihat CR-101). Status tetap `OPEN` sampai strategi dipilih.
+
+**Catatan verifikasi perbaikan**
+Kosong sampai Claude menandai `FIXED`.
+
+---
+
+### BUG-108 - Socket realtime tetap bisa mengambil `world:sync` tanpa auth saat REST sudah dilindungi token
+
+- **Status:** OPEN
+- **Severity:** high
+- **Category:** security
+- **Location:** `apps/server/src/realtime.ts:33`, `apps/server/src/server.ts:57`, `apps/web/src/socket.ts:33`
+- **Ditemukan:** 2026-06-11 oleh Codex
+
+**Deskripsi**
+Bearer auth hanya diterapkan pada URL yang diawali `/api/`. Socket.IO `/socket.io` tidak dicek token, dan `RealtimeHub` langsung menerima `world:subscribe` lalu mengirim snapshot company. Jadi saat REST sudah dilindungi token, world snapshot masih bisa diambil lewat socket tanpa auth bila penyerang mengetahui `companyId`.
+
+**Bukti**
+- Kutipan kode (`apps/server/src/server.ts:57`):
+  ```ts
+  if (apiToken && req.url.startsWith("/api/") && !hasValidBearer(req.headers.authorization, apiToken)) {
+  ```
+- Kutipan kode (`apps/server/src/realtime.ts:33-36`):
+  ```ts
+  socket.on("world:subscribe", (companyId: Id) => {
+    void socket.join(room(companyId));
+    const snap = this.store.getWorldSnapshot(companyId);
+    if (snap) socket.emit("world:sync", snap);
+  });
+  ```
+- Kutipan kode (`apps/web/src/socket.ts:33`, `apps/web/src/socket.ts:37`):
+  ```ts
+  const socket: WorldSocket = io({ autoConnect: true });
+  ...
+  socket.emit("world:subscribe", companyId);
+  ```
+- Observasi:
+  Server in-memory dengan `apiAuthToken: "secret"` + `RealtimeHub` menerima socket tanpa token dan mengirim `{"company":"A","agents":1}` setelah `world:subscribe`.
+- Alasan ini bug: proteksi REST tidak menutup channel realtime yang membawa data company yang sama (`WorldSnapshot` berisi company, floors, departments, agents).
+
+**Dampak**
+Mode hosting aman masih punya jalur baca tanpa auth untuk snapshot konfigurasi perusahaan. Ini membocorkan nama company, struktur lantai/departemen, dan profil agent ke client yang bisa menebak/memperoleh `companyId`.
+
+**Verifikasi #1 (pembacaan kode)**
+Auth hook di `server.ts` hanya memeriksa `/api/`, sedangkan `RealtimeHub` tidak menerima token, tidak memasang middleware Socket.IO, dan tidak memvalidasi handshake sebelum mengirim `world:sync`.
+
+**Verifikasi #2 (observasi runtime)**
+Script Node lokal membuat server dengan `apiAuthToken`, attach `RealtimeHub`, lalu connect via `socket.io-client` tanpa `auth`/header. Setelah emit `world:subscribe`, client tetap menerima snapshot.
+
+**Solusi yang diusulkan (untuk Claude)**
+1. Teruskan `apiAuthToken` ke `RealtimeHub`.
+2. Tambahkan Socket.IO middleware (`io.use`) yang memvalidasi token dari `socket.handshake.auth.token` atau header `Authorization`.
+3. Update `apps/web/src/socket.ts` agar mengirim token dengan mekanisme yang sama seperti REST.
+4. Tambahkan test realtime: tanpa token tidak menerima `world:sync`; token valid berhasil subscribe.
+
+**Catatan Claude 2026-06-11 — DITUNDA (butuh keputusan).**
+Tergantung strategi auth web yang sama dengan `BUG-107` (token diteruskan ke `RealtimeHub` via `io.use` + `socket.handshake.auth.token`). Test realtime juga butuh `socket.io-client` di root (kini hanya ada di `apps/web`). Status tetap `OPEN` sampai strategi auth dipilih; akan dikerjakan satu paket dengan `BUG-107` + CR-101.
+
+**Catatan verifikasi perbaikan**
+Kosong sampai Claude menandai `FIXED`.
+
+---
+
+### BUG-109 - Menghapus company aktif meninggalkan `companyId` stale di UI
 
 - **Status:** FIXED
 - **Severity:** medium
 - **Category:** logic
-- **Location:** `apps/web/src/game/OfficeScene.ts` (cabang "existing" di `applyWorld`)
-- **Ditemukan:** 2026-06-11 (self-review Phase 1)
+- **Location:** `apps/web/src/App.tsx:98`, `apps/web/src/components/CompanySetup.tsx:115`
+- **Ditemukan:** 2026-06-11 oleh Codex
 
 **Deskripsi**
-Saat snapshot baru masuk dan karakter sudah ada, cabang lama hanya meng-update label & tint — **tidak** memperbarui `obj.tile` maupun posisi container. Edit `deskPos` lewat Character Editor tak tercermin sampai scene dibangun ulang.
+Saat user menghapus company yang sedang aktif, `CompanySetup` hanya memanggil `reload()`. `reload()` memperbarui daftar company dan mencoba `getWorld(companyId)` untuk id lama, tetapi tidak pernah mengganti `companyId` ke company lain atau `null`. Akibatnya state global tetap menunjuk company yang sudah dihapus.
 
-**Bukti** Kode lama: `existing.label.setText(...)`, `existing.sprite.setTint(...)` saja. `deskPos` tak dipakai untuk reposisi.
+**Bukti**
+- Kutipan kode (`apps/web/src/components/CompanySetup.tsx:115-116`):
+  ```tsx
+  await api.deleteCompany(c.id);
+  await reload();
+  ```
+- Kutipan kode (`apps/web/src/App.tsx:98-105`):
+  ```tsx
+  const reload = useCallback(async (): Promise<void> => {
+    await refreshCompanies();
+    if (companyId) {
+      try {
+        setWorld(await api.getWorld(companyId));
+      } catch {
+        setWorld(null);
+      }
+  ```
+- Kutipan kode (`apps/web/src/components/CompanySetup.tsx:53-54`, `apps/web/src/components/CompanySetup.tsx:129`):
+  ```tsx
+  await api.createFloor(selectedCompanyId, { name: floorName.trim() });
+  ...
+  {selectedCompanyId && (
+  ```
+- Observasi REST:
+  Setelah `DELETE /api/companies/:id`, `GET /api/companies/:id/world` mengembalikan `{"deleteStatus":200,"worldAfterDelete":404}`.
 
-**Dampak** Setelah PATCH agent (Meja X/Y) + broadcast `world:sync`, karakter tetap di meja lama; klik meja baru tak memilihnya. Membingungkan & tampak seperti config tak tersimpan.
+**Dampak**
+UI dapat tetap menganggap company yang sudah dihapus sebagai aktif. Panel “Lantai company aktif” masih muncul karena `selectedCompanyId` truthy, lalu aksi seperti tambah lantai menarget id yang sudah tidak ada dan berakhir 404. Topbar select juga menerima `value={companyId}` yang tidak ada di opsi company terbaru.
 
-**Verifikasi #1** Baca cabang existing — tak ada penggunaan `deskPos`. **Verifikasi #2** Alur PATCH→onMutate→world:sync→applyWorld terbukti memanggil cabang existing.
+**Verifikasi #1 (pembacaan kode)**
+`reload()` tidak memakai hasil `refreshCompanies()` untuk mengecek apakah `companyId` masih ada. Effect auto-pilih company hanya berjalan saat mount (`refreshCompanies().then(...)`), bukan setiap list berubah setelah delete.
 
-**Perbaikan yang diterapkan** Cabang existing kini menghitung tile dari `deskPos` (via `clampTile`); bila berbeda, hentikan tween aktif, set `obj.tile`, dan `container.setPosition(...)` ke meja baru.
+**Verifikasi #2 (data-flow + observasi REST)**
+Alur `deleteCompany(activeId) -> reload() -> api.getWorld(activeId)` pasti memakai id lama karena `setCompanyId` tidak dipanggil. REST mengonfirmasi id lama sudah 404 setelah delete, sehingga UI masuk state `companyId` lama + `world=null`.
 
-**Catatan verifikasi perbaikan** — _menunggu Codex._
+**Solusi yang diusulkan (untuk Claude)**
+1. Ubah `reload()` agar memakai hasil `const list = await refreshCompanies()` dan merekonsiliasi `companyId`.
+2. Jika `companyId` sudah tidak ada, set ke `list[0]?.id ?? null` dan biarkan effect world loader memuat snapshot baru.
+3. Setelah delete company aktif di `CompanySetup`, bisa juga panggil callback eksplisit untuk memilih company berikutnya/null.
+4. Tambahkan test komponen atau minimal helper-state test untuk kasus delete selected company.
 
----
+**Diperbaiki (Claude 2026-06-11)** — status `FIXED`, menunggu verifikasi Codex.
+`App.tsx` kini punya effect rekonsiliasi `[companies]`: tiap daftar company berubah (mount/buat/hapus), `setCompanyId((cur) => cur valid ? cur : companies[0]?.id ?? null)` (updater fungsional → tak menabrak pilihan baru dari `onSelectCompany`). `reload()` memakai list hasil `refreshCompanies()` dan hanya `getWorld` bila company aktif masih ada (hindari fetch 404 untuk id terhapus); selebihnya effect rekonsiliasi + world-loader memuat ulang. Effect mount disederhanakan jadi sekadar `refreshCompanies()`. `npm run build:web` & `npm test` lulus. (Catatan: belum ada test komponen React di repo; verifikasi via build + pembacaan alur.)
 
-### BUG-103 — `listCommsByCompany` kembalikan comms semua company (bocor lintas-company)
-
-- **Status:** FIXED
-- **Severity:** medium
-- **Category:** data-loss / security (isolation)
-- **Location:** `apps/server/src/db/store.ts`
-- **Ditemukan:** 2026-06-11 (self-review Phase 1)
-
-**Deskripsi**
-`listCommsByCompany(_companyId)` mengabaikan parameter dan menjalankan `SELECT * FROM comms_messages` tanpa `WHERE` → mengembalikan pesan **semua** company.
-
-**Bukti** Parameter `_companyId` tak terpakai; query tanpa filter. `GET /api/companies/:id/comms` memanggilnya.
-
-**Dampak** Begitu tabel `comms_messages` terisi (Phase 3), Comms Viewer company A akan menampilkan percakapan company B. Latent di Phase 1 (tabel kosong) tapi salah secara kontrak.
-
-**Verifikasi #1** Baca query — tak ada filter company. **Verifikasi #2** Skema `comms_messages` belum punya kolom `company_id` / pemetaan thread→company, jadi scoping memang belum mungkin sekarang.
-
-**Perbaikan yang diterapkan** Karena belum ada pemetaan thread→company dan belum ada produsen comms di Phase 1, method kini mengembalikan `[]` (dengan komentar TODO: scoping per company menyusul Phase 3 bersama tabel `threads`). Aman-secara-default (tak membocorkan apa pun).
-
-**Catatan verifikasi perbaikan** — _menunggu Codex._
-
----
-
-### BUG-104 — `clampTile` hasil negatif saat grid belum terbentuk
-
-- **Status:** FIXED
-- **Severity:** low
-- **Category:** logic
-- **Location:** `apps/web/src/game/OfficeScene.ts`
-- **Ditemukan:** 2026-06-11 (self-review Phase 1)
-
-**Deskripsi** `this.gridW - 2 || 1` → saat `gridW = 0`, hasilnya `-2` (truthy), bukan `1`. Batas atas jadi `-2`, mengembalikan koordinat negatif.
-
-**Bukti** `Math.min(Math.max(1, x), -2)` = `-2`. Terjadi bila tileset gagal register (`addTilesetImage` null) sehingga `buildGrid` dilewati.
-
-**Dampak** Skenario degeneratif (aset map gagal): seluruh klik ditolak / spawn di koordinat negatif — scene mati senyap tanpa error. Robustness.
-
-**Verifikasi #1** Evaluasi ekspresi `gridW-2 || 1` untuk gridW=0. **Verifikasi #2** Jejak: `create()` melewati `buildGrid` saat `tileset` null → gridW tetap 0.
-
-**Perbaikan yang diterapkan** `const maxX = Math.max(1, this.gridW - 2)` (dan maxY) — aman walau grid 0.
-
-**Catatan verifikasi perbaikan** — _menunggu Codex._
-
----
-
-### BUG-105 — Respons `getWorld` basi saat ganti company cepat
-
-- **Status:** FIXED
-- **Severity:** low
-- **Category:** concurrency
-- **Location:** `apps/web/src/App.tsx`
-- **Ditemukan:** 2026-06-11 (self-review Phase 1)
-
-**Deskripsi** Effect pemuat world (`[companyId]`) tak mem-guard respons `api.getWorld(prev)` yang datang setelah company berganti.
-
-**Bukti** `api.getWorld(companyId).then(setWorld)` tanpa pembatalan; promise lama bisa resolve setelah pilihan berubah.
-
-**Dampak** Ganti A→B cepat: snapshot A bisa men-`setWorld` saat UI menampilkan B → render company salah sesaat + churn reset floorId/departmentId.
-
-**Verifikasi #1** Baca effect — tak ada flag ignore. **Verifikasi #2** Skenario async standar (resolve out-of-order).
-
-**Perbaikan yang diterapkan** Tambah flag `ignore` di cleanup effect; respons lama diabaikan.
-
-**Catatan verifikasi perbaikan** — _menunggu Codex._
+**Catatan verifikasi perbaikan**
+Kosong sampai Codex memverifikasi.

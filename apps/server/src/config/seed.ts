@@ -7,7 +7,7 @@
  * salinannya sendiri (dua dept dari template sama tidak bentrok id workflow).
  */
 
-import { randomUUID } from "node:crypto";
+import { defaultGenId } from "@vc/agent-runtime";
 import type { AgentProfile, Department, DepartmentTemplate, Id, WorkflowDef } from "@vc/shared";
 import type { ConfigStore } from "../db/store.js";
 
@@ -27,12 +27,19 @@ export interface SeededDepartment {
   agents: AgentProfile[];
 }
 
-/** Clone WorkflowDef dengan id baru; remap referensi `next` antar-step. */
-export function cloneWorkflowDef(def: WorkflowDef, genId: () => string = randomUUID): WorkflowDef {
+/**
+ * Clone WorkflowDef dengan id baru; remap referensi `next` antar-step.
+ * `genId` memakai format id tunggal `defaultGenId(prefix)` dari agent-runtime (CR-105);
+ * bisa di-override untuk test deterministik (mis. `makeSeqIdGen`).
+ */
+export function cloneWorkflowDef(
+  def: WorkflowDef,
+  genId: (prefix: string) => string = defaultGenId,
+): WorkflowDef {
   const idMap = new Map<Id, Id>();
-  for (const step of def.steps) idMap.set(step.id, `wf-step_${genId()}`);
+  for (const step of def.steps) idMap.set(step.id, genId("wf-step"));
   return {
-    id: `wf_${genId()}`,
+    id: genId("wf"),
     name: def.name,
     steps: def.steps.map((step) => {
       const cloned = { ...step, id: idMap.get(step.id)! };

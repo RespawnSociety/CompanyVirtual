@@ -18,13 +18,29 @@ export function CommsViewer({ companyId }: { companyId: string | null }): JSX.El
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    if (!companyId) return;
+    if (!companyId) {
+      setMsgs([]);
+      setLoaded(false);
+      return;
+    }
+    // CR-109: bersihkan data lama + guard ignore agar respons company lama tak menimpa yang baru.
+    setMsgs([]);
     setLoaded(false);
+    let ignore = false;
     api
       .listComms(companyId)
-      .then((m) => setMsgs(m))
-      .catch(() => setMsgs([]))
-      .finally(() => setLoaded(true));
+      .then((m) => {
+        if (!ignore) setMsgs(m);
+      })
+      .catch(() => {
+        if (!ignore) setMsgs([]);
+      })
+      .finally(() => {
+        if (!ignore) setLoaded(true);
+      });
+    return () => {
+      ignore = true;
+    };
   }, [companyId]);
 
   if (!companyId) {

@@ -78,6 +78,17 @@ describe("REST config API via inject (Phase 1.3–1.7)", () => {
     expect(pRes.statusCode).toBe(200);
     expect((pRes.json() as { name: string }).name).toBe("Custom 2");
 
+    // BUG-106: status di luar AgentStatus → 400 & status lama tak berubah.
+    const badStatus = await app.inject({
+      method: "PATCH",
+      url: `/api/agents/${agentId}`,
+      payload: { status: "banana" },
+    });
+    expect(badStatus.statusCode).toBe(400);
+    const stillWorking = await app.inject({ method: "GET", url: `/api/departments/${seeded.department.id}/agents` });
+    const found = (stillWorking.json() as { id: string; status: string }[]).find((a) => a.id === agentId);
+    expect(found?.status).toBe("working");
+
     // delete agent
     const delRes = await app.inject({ method: "DELETE", url: `/api/agents/${agentId}` });
     expect(delRes.statusCode).toBe(200);
@@ -98,5 +109,86 @@ describe("REST config API via inject (Phase 1.3–1.7)", () => {
 
     const badTemplate = await app.inject({ method: "GET", url: "/api/templates/ngawur" });
     expect(badTemplate.statusCode).toBe(404);
+  });
+
+  it("CR-102: PATCH bisa mengosongkan commsHandle (agent) & workflowId (department)", async () => {
+    const co = (
+      await app.inject({ method: "POST", url: "/api/companies", payload: { name: "Clear Co" } })
+    ).json() as { id: string };
+    const fl = (
+      await app.inject({
+        method: "POST",
+        url: `/api/companies/${co.id}/floors`,
+        payload: { name: "L1" },
+      })
+    ).json() as { id: string };
+    const seeded = (
+      await app.inject({
+        method: "POST",
+        url: `/api/floors/${fl.id}/departments`,
+        payload: { templateId: MARKETING_TEMPLATE_ID },
+      })
+    ).json() as { department: { id: string; workflowId?: string } };
+
+    // department dari template punya workflowId → bisa di-clear lewat PATCH workflowId:"".
+    expect(seeded.department.workflowId).toBeTruthy();
+    const deptCleared = (
+      await app.inject({
+        method: "PATCH",
+        url: `/api/departments/${seeded.department.id}`,
+        payload: { workflowId: "" },
+      })
+    ).json() as { workflowId?: string };
+    expect(deptCleared.workflowId).toBeUndefined();
+
+    // agent dgn commsHandle → bisa di-clear lewat PATCH commsHandle:"".
+    const ag = (
+      await app.inject({
+        method: "POST",
+        url: `/api/departments/${seeded.department.id}/agents`,
+        payload: { name: "Hubungi", role: "CS", commsHandle: "+628111" },
+      })
+    ).json() as { id: string; commsHandle?: string };
+    expect(ag.commsHandle).toBe("+628111");
+    const agCleared = (
+      await app.inject({
+        method: "PATCH",
+        url: `/api/agents/${ag.id}`,
+        payload: { commsHandle: "" },
+      })
+    ).json() as { commsHandle?: string };
+    expect(agCleared.commsHandle).toBeUndefined();
+  });
+});
+
+describe("CR-101: bearer auth pada /api/* bila API_AUTH_TOKEN di-set", () => {
+  it("tanpa/ salah token → 401; token benar → 200", async () => {
+    const store = new ConfigStore(":memory:");
+    const app = buildServer({ configStore: store, apiAuthToken: "rahasia" });
+    await app.ready();
+
+    const noAuth = await app.inject({ method: "GET", url: "/api/companies" });
+    expect(noAuth.statusCode).toBe(401);
+
+    const wrong = await app.inject({
+      method: "GET",
+      url: "/api/companies",
+      headers: { authorization: "Bearer salah" },
+    });
+    expect(wrong.statusCode).toBe(401);
+
+    const ok = await app.inject({
+      method: "GET",
+      url: "/api/companies",
+      headers: { authorization: "Bearer rahasia" },
+    });
+    expect(ok.statusCode).toBe(200);
+
+    // /health di luar /api → tetap terbuka.
+    const health = await app.inject({ method: "GET", url: "/health" });
+    expect(health.statusCode).toBe(200);
+
+    await app.close();
+    store.close();
   });
 });
