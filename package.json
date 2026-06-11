@@ -23,6 +23,8 @@
     "test:watch": "vitest",
     "dev:server": "npm run -w @vc/server dev",
     "dev:web": "npm run -w @vc/web dev",
+    "review:codex": "codex exec -s workspace-write \"Baca dan ikuti AGENTS.md lalu infra/codex/REVIEW.md, kemudian kerjakan tugas review di sana (bug hunt verifikasi 2x ke docs BUGLIST, temuan kualitas ke docs CODE_REVIEW, dan verifikasi entri berstatus FIXED).\"",
+    "verify:codex": "codex exec -s workspace-write \"Baca AGENTS.md lalu infra/codex/REVIEW.md bagian VERIFIKASI. Verifikasi ulang tiap entri docs/BUGLIST.md berstatus FIXED (saat ini BUG-101 sampai BUG-105): pastikan akar masalah hilang dan tak ada regresi, lalu set VERIFIED_FIXED atau REOPENED dengan bukti file:line.\"",
     "prespike:router": "npm run build",
     "spike:router": "tsx infra/scripts/spike-router.ts",
     "prespike:loop": "npm run build",

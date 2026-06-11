@@ -123,6 +123,43 @@ npm run lint            # eslint seluruh repo (termasuk web)
 
 ---
 
+## Menjalankan Codex (review & bug hunt)
+
+> Codex = **Reviewer & Bug Hunter** (lihat `AGENTS.md`). Ia membaca `AGENTS.md` otomatis;
+> command di bawah mengarahkannya ke ringkasan tugas `infra/codex/REVIEW.md`.
+
+**Prasyarat:** pasang Codex CLI sekali (global), mis.:
+```bash
+npm install -g @openai/codex     # lalu login: `codex login` (sekali)
+codex --version                  # pastikan terpasang
+```
+
+**Jalankan review fase berjalan** (tulis temuan ke `docs/BUGLIST.md` & `docs/CODE_REVIEW.md`):
+```bash
+npm run review:codex     # bug hunt + temuan kualitas + verifikasi entri FIXED
+npm run verify:codex     # khusus: verifikasi ulang entri BUGLIST berstatus FIXED
+```
+
+Atau **interaktif** (supaya bisa diawasi langkah demi langkah):
+```bash
+codex          # buka TUI, lalu ketik:
+# "Baca dan ikuti AGENTS.md lalu infra/codex/REVIEW.md, kerjakan tugas review di sana."
+```
+
+**Catatan keamanan (penting):** command memakai sandbox `workspace-write` agar Codex bisa menulis
+dua file laporan. Batas "READ-ONLY pada source, tulis hanya ke BUGLIST/CODE_REVIEW" ditegakkan lewat
+instruksi `AGENTS.md`. Operator yang ingin penegakan teknis bisa menjalankan Codex di sandbox/whitelist
+yang hanya mengizinkan tulis ke dua file itu (lihat catatan setup di `AGENTS.md` §1).
+
+> Flag CLI bisa beda antar versi Codex; sesuaikan `-s/--sandbox` bila perlu. Bila perintah `codex`
+> belum ada di PATH, `npm run review:codex` akan gagal dengan "command not found" — pasang dulu (di atas).
+
+**Status review saat ini:** Phase 1 di-review sebagai self-review Claude (Codex belum terpasang di
+environment build). `docs/BUGLIST.md` berisi `BUG-101..105` (FIXED) yang **menunggu verifikasi Codex**;
+`docs/CODE_REVIEW.md` berisi `CR-101..108` (OPEN). Jalankan `npm run verify:codex` untuk memverifikasi.
+
+---
+
 ## Struktur perintah workspace
 
 ```bash
