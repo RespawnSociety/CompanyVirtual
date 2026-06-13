@@ -3,7 +3,13 @@
  */
 
 export { runAgentLoop } from "./loop.js";
-export type { RunAgentLoopDeps, AgentLoopResult, ToolRun } from "./loop.js";
+export type {
+  RunAgentLoopDeps,
+  AgentLoopResult,
+  ToolRun,
+  LoopUsage,
+  TierUsageTotals,
+} from "./loop.js";
 
 export * from "./router/index.js";
 export * from "./skills/index.js";

@@ -187,4 +187,22 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
     INDEX idx_audit_agent_action (agent_id, action),
     CONSTRAINT fk_audit_company FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
   ) ${TABLE_OPTS}`,
+
+  // Phase 5.4 — Pemakaian LLM (token) per loop agent, untuk KPI biaya. Satu baris per
+  // (loop, tier). Token dari 9Router `usage`; biaya dihitung saat baca (tarif dapat diubah).
+  `CREATE TABLE IF NOT EXISTS usage_events (
+    id                VARCHAR(64) PRIMARY KEY,
+    company_id        VARCHAR(64) NULL,
+    department_id     VARCHAR(64) NULL,
+    agent_id          VARCHAR(64) NOT NULL,
+    tier              VARCHAR(32) NOT NULL,
+    calls             INT NOT NULL,
+    prompt_tokens     BIGINT NOT NULL,
+    completion_tokens BIGINT NOT NULL,
+    total_tokens      BIGINT NOT NULL,
+    at                BIGINT NOT NULL,
+    INDEX idx_usage_company (company_id),
+    INDEX idx_usage_company_dept (company_id, department_id),
+    CONSTRAINT fk_usage_company FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+  ) ${TABLE_OPTS}`,
 ];

@@ -238,4 +238,38 @@ describe("runAgentLoop", () => {
     expect(systemPrompt.length).toBeLessThan(500);
     expect(systemPrompt).not.toContain(long);
   });
+
+  it("Phase 5.4: usage token terakumulasi per tier (untuk KPI biaya)", async () => {
+    const skills = new SkillRegistry().register(createWebSearchSkill());
+    const memory = new InMemoryMemoryStore();
+    const withUsage = (
+      base: ChatResponse,
+      tier: ChatResponse["tierUsed"],
+      p: number,
+      c: number,
+    ): ChatResponse => ({
+      ...base,
+      tierUsed: tier,
+      usage: { promptTokens: p, completionTokens: c, totalTokens: p + c },
+    });
+    const router = new MockRouterClient([
+      withUsage(toolCallResponse("web_search", { query: "x" }), "subscription", 10, 5),
+      withUsage(textResponse("ok."), "cheap", 7, 3),
+    ]);
+
+    const res = await runAgentLoop(agentWith(["web_search"]), "cari", {
+      router,
+      skills,
+      memory,
+      ...fixedDeps(),
+    });
+
+    expect(res.usage.calls).toBe(2);
+    expect(res.usage.promptTokens).toBe(17);
+    expect(res.usage.completionTokens).toBe(8);
+    expect(res.usage.totalTokens).toBe(25);
+    expect(res.usage.byTier.subscription?.totalTokens).toBe(15);
+    expect(res.usage.byTier.cheap?.totalTokens).toBe(10);
+    expect(res.usage.byTier.subscription?.calls).toBe(1);
+  });
 });

@@ -277,6 +277,52 @@ npm test    # 87 test — + vault, social (mock), guardrails, audit/approval sto
 
 ---
 
+## Phase 5 — Platform Generalization 🏢⭐
+
+Buktikan ini PLATFORM, bukan app marketing: departemen kedua (**Sales**) jalan dengan engine yang
+sama, navigasi multi-lantai, departemen custom, **KPI dashboard biaya**, dan optimasi router.
+
+### Catatan teknis
+- **Sales template (5.1):** `packages/templates/src/sales.ts` (`tmpl-sales`). Role: Sales Manager →
+  Lead Researcher → Proposal Writer → Sales Reviewer → Outreach Rep. Aksi akhir = skill baru
+  **`send_outreach`** (`risky`, approval-gated; provider mock/dry-run default — tak benar-benar
+  terkirim). Engine TIDAK berubah (data-driven). Skill terdaftar di `KNOWN_SKILLS` + dihitung
+  guardrail `rate_limit` (ikut `EXTERNAL_POST_ACTIONS`).
+- **Multi-floor (5.2):** `OfficeScene` memuat aset map per `Floor.mapKey` saat runtime & membangun
+  ulang layer + grid pathfinding. Aset: `office-default` (`office.json`) & `office-open`
+  (`office2.json`, denah bersekat). Pilih denah saat menambah lantai (tab Company); pindah lantai
+  di tab Kantor. mapKey tak dikenal → fallback default (peringatan).
+- **Custom department (5.3):** Department Builder mode "Custom" (name+purpose+skillPool, tanpa
+  template) → dept tanpa workflow/agent; tambah karakter via Character Editor.
+- **KPI (5.4):** token LLM direkam tiap loop ke tabel `usage_events` (per tier), dihitung
+  `apps/server/src/kpi/kpi.ts`, endpoint `GET /api/companies/:id/kpi`, tab **📊 KPI**. Biaya =
+  ESTIMASI (token × tarif per-1k tier dari `.env` `COST_*`); subscription default 0 (langganan flat).
+- **Optimasi router (5.5):** throttle (`LLM_MAX_CONCURRENCY`, `LLM_MIN_INTERVAL_MS`) + tier cooldown
+  (`NINEROUTER_TIER_COOLDOWN_MS` — lewati tier yang baru gagal). Workflow run persist+resume (Phase 3).
+
+### Verifikasi cepat
+```bash
+npm test    # 104 test — + sales template/skill (send_outreach), KPI computeKpi (biaya/aktivitas/
+            #   status), router throttle + tier cooldown, loop usage; custom dept end-to-end.
+            # Tiap FILE test memakai DB sendiri (virtual_company_test_<file>) → tak ada flakiness.
+```
+
+### DoD Fase 5 — uji manual
+1. `npm run dev:server` + `npm run dev:web` (9Router & MySQL hidup).
+2. Tab **Company**: buat company → tambah 2 lantai (pilih denah berbeda: "terbuka" & "bersekat").
+3. Tab **Departemen**: lantai 1 → tambah **Pemasaran** (template); lantai 2 → tambah **Penjualan**
+   (template); + buat 1 dept **Custom** (mode Custom) lalu tambah 1 karakter via tab Karakter.
+4. Tab **Kantor**: ganti lantai → denah & karakter ikut berubah per lantai.
+5. Tab **Workflow**: kirim arahan ke Pemasaran DAN Penjualan → keduanya jalan (Sales berhenti di
+   approval sebelum `send_outreach`; APPROVE → outreach dry-run).
+6. Tab **📊 KPI**: muncul total token + estimasi biaya, biaya per hari, dan rincian per departemen
+   (Pemasaran & Penjualan) + status agent. **Lolos bila** ≥2 departemen berbeda jalan stabil &
+   biaya/aktivitas terpantau.
+
+> Tarif biaya bisa diubah: `.env` `COST_PER_1K_CHEAP` dll (token tetap tampil apa adanya).
+
+---
+
 ## Menjalankan Codex (review & bug hunt)
 
 > Codex = **Reviewer & Bug Hunter** (lihat `AGENTS.md`). Ia membaca `AGENTS.md` otomatis;

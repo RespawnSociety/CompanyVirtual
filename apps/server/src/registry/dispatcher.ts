@@ -30,6 +30,7 @@ import {
   type SkillRegistry,
 } from "@vc/agent-runtime";
 import type { ConfigStore } from "../db/store.js";
+import { recordLoopUsage } from "../kpi/recordUsage.js";
 
 export interface DispatcherDeps {
   store: ConfigStore;
@@ -149,6 +150,14 @@ export class DirectiveDispatcher {
       emitTaskUpdate(updated);
       return { status: "error", finalText: null, task: updated, error: message };
     }
+
+    // Phase 5.4: catat pemakaian token (biaya). Tak boleh menggagalkan kerja → catch & log saja.
+    await recordLoopUsage(
+      store,
+      { companyId, departmentId: agent.departmentId, agentId: agent.id },
+      result.usage,
+      now(),
+    ).catch((e) => console.error("[kpi] recordLoopUsage:", e));
 
     // Selesai dengan teks final → simpan Artifact, tandai done.
     if (result.status === "done" && result.finalText) {

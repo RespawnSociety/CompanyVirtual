@@ -35,3 +35,11 @@ export {
   createPostPublisherFromEnv,
 } from "./playwrightPublisher.js";
 export type { PostProviderMode, PlaywrightPublisherOptions } from "./playwrightPublisher.js";
+export { createSendOutreachSkill, mockOutreachSender } from "./sendOutreach.js";
+export type {
+  OutreachChannel,
+  OutreachRequest,
+  OutreachContext,
+  OutreachResult,
+  OutreachSender,
+} from "./sendOutreach.js";

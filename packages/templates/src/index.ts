@@ -8,11 +8,16 @@
 
 import type { DepartmentTemplate, Id } from "@vc/shared";
 import { MARKETING_TEMPLATE } from "./marketing.js";
+import { SALES_TEMPLATE } from "./sales.js";
 
 export { MARKETING_TEMPLATE, MARKETING_TEMPLATE_ID } from "./marketing.js";
+export { SALES_TEMPLATE, SALES_TEMPLATE_ID } from "./sales.js";
 
 /** Semua template terdaftar (urutan = urutan tampil di Department Builder). */
-export const DEPARTMENT_TEMPLATES: readonly DepartmentTemplate[] = [MARKETING_TEMPLATE];
+export const DEPARTMENT_TEMPLATES: readonly DepartmentTemplate[] = [
+  MARKETING_TEMPLATE,
+  SALES_TEMPLATE,
+];
 
 /** Daftar template untuk UI (ringkas). */
 export function listDepartmentTemplates(): readonly DepartmentTemplate[] {

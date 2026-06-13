@@ -28,7 +28,7 @@
 | **2** | Runtime + 1 Agent Nyata | ✅ selesai (2.1–2.6; Codex sweep Phase 0–3 ✓, nol bug high+) | Directive → agent kerja → Artifact |
 | **3** | Departemen Lengkap + Workflow Engine | ✅ selesai (3.1–3.6; Codex sweep ✓, BUG-112/113 `VERIFIED_FIXED`) | Pipeline Marketing + Approval Gate |
 | **4** | Aksi Eksternal + Keamanan | ✅ selesai (4.1–4.5; Codex VERIFIED — BUG-107/108/114/115 `VERIFIED_FIXED`, CR-101 `VERIFIED`; test 89/89) | Publish (Playwright/dry-run) + Vault + audit + guardrails + auth boundary |
-| **5** | Platform Generalization | ⬜ belum | ≥2 departemen berjalan stabil |
+| **5** | Platform Generalization | 🟡 5.1–5.5 ✓ (build/lint/typecheck:web/build:web + test **104/104**, stabil 4×) — self-review Claude; BUG-116/117 → `FIXED`, menunggu verifikasi Codex (5.6) | Sales template + KPI dashboard + multi-floor + custom dept + throttle/cooldown |
 | **6** | App Packaging | ⬜ belum | Tauri desktop + web |
 | **7** | Memory Graph per Agent | ⬜ belum | Visualisasi graph memory (ala graphify.net) per karakter |
 
@@ -139,14 +139,16 @@ Legenda: ⬜ belum · 🟡 jalan · ✅ selesai (DoD lolos + Codex verified)
 
 **Tujuan:** buktikan ini platform, bukan app marketing.
 
-- [ ] **5.1 Department Template Library** — tambah ≥1 template baru (Sales/CS/Produk/…): role+skill+workflow berbeda, engine sama.
-- [ ] **5.2 Multi-floor & perpindahan lantai** — navigasi antar lantai di world 2D.
-- [ ] **5.3 Custom department** — buat dept tanpa template lewat Department Builder.
-- [ ] **5.4 KPI dashboard** — per departemen/company; biaya per "hari kerja" terpantau.
-- [ ] **5.5 Save/resume + optimasi** — performa & biaya (throttle, cache routing tier 9Router).
-- [ ] **5.6 Codex review Phase 5** — fokus: nol regresi pada Marketing saat menambah dept kedua; tak ada coupling departemen-spesifik di engine.
+- [x] **5.1 Department Template Library** — **Sales** template (#2) ditambah: role+skill+workflow berbeda (aksi akhir `send_outreach`, bukan publish sosmed), engine SAMA. Skill baru `send_outreach` (risky, approval-gated, provider mock/dry-run default) → `packages/templates/src/sales.ts`, `packages/agent-runtime/src/skills/sendOutreach.ts`, terdaftar di `DEPARTMENT_TEMPLATES` + `KNOWN_SKILLS` + guardrail `EXTERNAL_POST_ACTIONS`.
+- [x] **5.2 Multi-floor & perpindahan lantai** — `OfficeScene` memuat & menukar aset map saat runtime per `Floor.mapKey` (bangun ulang layer + grid pathfinding); aset map ke-2 (`office2.json`, denah bersekat); pemilih map per-lantai di Company Setup. Pilih lantai di tab Kantor → world ganti denah + karakter lantai itu.
+- [x] **5.3 Custom department** — dibuat tanpa template lewat Department Builder (name+purpose+skillPool); muncul di world & KPI; karakter ditambah via Character Editor. Diuji end-to-end (`tests/kpi.test.ts`).
+- [x] **5.4 KPI dashboard** — tab **📊 KPI**: biaya LLM (token nyata × tarif per-tier, per hari/dept/tier), aktivitas (task/konten/aksi eksternal/approval), status agent. Token direkam di loop (`usage_events`), dihitung `computeKpi`, endpoint `GET /api/companies/:id/kpi`. Tarif di `.env` (`COST_*`).
+- [x] **5.5 Save/resume + optimasi** — workflow run sudah persist+resume (Phase 3). Optimasi: router **throttle** (concurrency + jarak antar-panggilan, `LLM_MAX_CONCURRENCY`/`LLM_MIN_INTERVAL_MS`) + **tier cooldown** ("cache routing tier": lewati tier yang baru gagal, `NINEROUTER_TIER_COOLDOWN_MS`).
+- [ ] **5.6 Codex review Phase 5** — fokus: nol regresi pada Marketing saat menambah dept kedua; tak ada coupling departemen-spesifik di engine. **Self-review Claude selesai** (BUG-116/117 di `send_outreach` → `FIXED`; CR-110 throttle escape-hatch → `ADDRESSED`); **menunggu verifikasi independen Codex** (`npm run review:codex` di sisi owner).
 
 **DoD Fase 5:** pengguna bisa buat company baru, tambah **≥2 departemen berbeda** dari template/custom, keduanya jalan stabil, biaya terpantau.
+
+**Status Phase 5:** `npm run build` ✅ · `npm run lint` ✅ · `npm run typecheck:web` ✅ · `npm run build:web` ✅ · `npm test` ✅ **104/104** (stabil 4× berturut). Tambahan: flakiness lintas-file test DB diperbaiki — tiap file test kini pakai **database sendiri** (`tests/helpers/mysql.ts`), tak lagi satu DB bersama. Smoke multi-floor & KPI butuh web + 9Router hidup (biaya AI nyata muncul saat 9Router jalan). Menunggu verifikasi Codex (5.6).
 
 ---
 

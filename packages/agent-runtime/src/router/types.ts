@@ -25,6 +25,15 @@ export interface NineRouterConfig {
   timeoutMs?: number;
   /** Default temperature bila request tidak menyetel. */
   defaultTemperature?: number;
+  /**
+   * Phase 5.5 — "cache routing tier": setelah sebuah tier GAGAL, lewati tier itu selama
+   * `tierCooldownMs` ms (hindari membuang panggilan ke tier yang sedang mati → hemat biaya/latency).
+   * Tier yang berhasil dipulihkan dari cooldown. 0 = nonaktif (default). Tak pernah mengosongkan
+   * seluruh kandidat: bila semua tier ter-cooldown, tetap dicoba.
+   */
+  tierCooldownMs?: number;
+  /** Jam (di-inject untuk test deterministik). Default Date.now. */
+  now?: () => number;
 }
 
 /** Urutan fallback default (plan §5: routing tier per-peran). */

@@ -14,8 +14,9 @@ import { CharacterEditor } from "./components/CharacterEditor.js";
 import { TaskBoard } from "./components/TaskBoard.js";
 import { CommsViewer } from "./components/CommsViewer.js";
 import { WorkflowPanel } from "./components/WorkflowPanel.js";
+import { KpiDashboard } from "./components/KpiDashboard.js";
 
-type Tab = "world" | "company" | "departments" | "characters" | "workflow" | "tasks" | "comms";
+type Tab = "world" | "company" | "departments" | "characters" | "workflow" | "tasks" | "kpi" | "comms";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "world", label: "🏢 Kantor" },
@@ -24,6 +25,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "characters", label: "Karakter" },
   { id: "workflow", label: "Workflow" },
   { id: "tasks", label: "Task Board" },
+  { id: "kpi", label: "📊 KPI" },
   { id: "comms", label: "Comms" },
 ];
 
@@ -204,6 +206,7 @@ export function App(): JSX.Element {
           />
         )}
         {tab === "tasks" && <TaskBoard companyId={companyId} refreshTick={refreshTick} world={world} />}
+        {tab === "kpi" && <KpiDashboard companyId={companyId} refreshTick={refreshTick} />}
         {tab === "comms" && <CommsViewer companyId={companyId} />}
       </div>
     </div>

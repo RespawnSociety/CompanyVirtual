@@ -17,8 +17,8 @@ import { DEFAULT_MAP_KEY, isKnownMapKey, mapPathFor } from "./maps.js";
 
 const TILESET_TEX = "tiles-gen";
 const CHAR_TEX = "char-gen";
-// Cache key Phaser untuk tilemap yang dimuat (bukan Floor.mapKey — itu di registry maps.ts).
-const MAP_CACHE_KEY = "office-map";
+// Phase 5.2: cache key Phaser untuk tilemap = `Floor.mapKey` itu sendiri (satu aset per mapKey).
+// Map default dimuat di preload; map lain dimuat saat runtime ketika lantai berganti.
 
 interface CharObj {
   container: Phaser.GameObjects.Container;
@@ -56,34 +56,30 @@ export class OfficeScene extends Phaser.Scene {
   private clockText!: Phaser.GameObjects.Text;
   private minutes = 9 * 60; // mulai 09:00
 
-  // mapKey lantai yang sedang dirender (CR-103). Dipakai untuk mendeteksi permintaan
-  // ganti map antar-lantai (Phase 5) tanpa men-spam peringatan tiap snapshot.
+  // Phase 5.2: aset map (mapKey) yang sedang dirender + handle tilemap/layer aktif agar
+  // bisa di-destroy & dibangun ulang saat lantai berganti. `loadingMapKey` mencegah load ganda.
   private renderedMapKey = DEFAULT_MAP_KEY;
+  private loadingMapKey: string | null = null;
+  private tilemap: Phaser.Tilemaps.Tilemap | null = null;
+  private groundLayer: Phaser.Tilemaps.TilemapLayer | null = null;
+  private readonly warnedMapKeys = new Set<string>();
 
   constructor() {
     super("office");
   }
 
   preload(): void {
-    // Path map data-driven dari registry (bukan string hardcode); default Phase 1 = office.json.
-    this.load.tilemapTiledJSON(MAP_CACHE_KEY, mapPathFor(DEFAULT_MAP_KEY));
+    // Path map data-driven dari registry (bukan string hardcode); default = office.json.
+    // Cache key = mapKey agar swap antar-lantai (Phase 5.2) tinggal pakai key yang sama.
+    this.load.tilemapTiledJSON(DEFAULT_MAP_KEY, mapPathFor(DEFAULT_MAP_KEY));
   }
 
   create(): void {
     this.makeTextures();
-
-    const map = this.make.tilemap({ key: MAP_CACHE_KEY });
-    const tileset = map.addTilesetImage("office", TILESET_TEX);
-    if (tileset) {
-      const layer = map.createLayer("ground", tileset, 0, 0);
-      this.gridW = map.width;
-      this.gridH = map.height;
-      this.buildGrid(layer);
-    }
-
-    this.easystar.setGrid(this.grid);
     this.easystar.setAcceptableTiles([0]);
     this.easystar.enableSync();
+    this.buildMap(DEFAULT_MAP_KEY);
+    this.renderedMapKey = DEFAULT_MAP_KEY;
 
     // HUD jam (atas-kiri, tidak ikut scroll).
     this.clockText = this.add
@@ -173,20 +169,58 @@ export class OfficeScene extends Phaser.Scene {
   // ---------------- internal ----------------
 
   /**
-   * Selaraskan render dengan mapKey lantai aktif (CR-103). Phase 1 hanya punya satu aset map,
-   * jadi permintaan map berbeda hanya dicatat sekali (per perubahan key) — bukan diabaikan diam-diam.
-   * Pergantian/penambahan map antar-lantai saat runtime = Phase 5.
+   * Phase 5.2 — selaraskan render dengan mapKey lantai aktif. Bila lantai memakai aset map
+   * berbeda, muat (bila perlu) lalu bangun ulang tilemap + grid pathfinding saat runtime.
+   * mapKey tak dikenal → fallback ke default (peringatan sekali per key).
    */
   private ensureMapForFloor(mapKey: string | undefined): void {
     const desired = mapKey ?? DEFAULT_MAP_KEY;
-    if (desired === this.renderedMapKey) return;
-    this.renderedMapKey = desired;
-    if (desired !== DEFAULT_MAP_KEY) {
-      const known = isKnownMapKey(desired) ? "terdaftar tapi" : "belum terdaftar dan";
+    // Aset efektif: bila tak terdaftar, render default (jangan coba load berkas yang tak ada).
+    const assetKey = isKnownMapKey(desired) ? desired : DEFAULT_MAP_KEY;
+    if (assetKey !== desired && !this.warnedMapKeys.has(desired)) {
+      this.warnedMapKeys.add(desired);
       console.warn(
-        `[OfficeScene] lantai meminta mapKey '${desired}' (${known} belum bisa di-render runtime). ` +
-          `Tetap render '${DEFAULT_MAP_KEY}' — multi-map antar-lantai = Phase 5.`,
+        `[OfficeScene] mapKey '${desired}' belum punya aset terdaftar — render '${DEFAULT_MAP_KEY}'.`,
       );
+    }
+    if (assetKey === this.renderedMapKey || assetKey === this.loadingMapKey) return;
+
+    if (this.cache.tilemap.exists(assetKey)) {
+      this.buildMap(assetKey);
+      this.renderedMapKey = assetKey;
+      return;
+    }
+    // Belum dimuat → muat saat runtime, lalu bangun ulang map. Karakter (GameObject terpisah)
+    // tetap di posisinya; kedua map berukuran sama (20×14) jadi tak perlu reposisi.
+    this.loadingMapKey = assetKey;
+    this.load.tilemapTiledJSON(assetKey, mapPathFor(assetKey));
+    this.load.once(Phaser.Loader.Events.COMPLETE, () => {
+      this.loadingMapKey = null;
+      if (!this.cache.tilemap.exists(assetKey)) return;
+      this.buildMap(assetKey);
+      this.renderedMapKey = assetKey;
+    });
+    this.load.start();
+  }
+
+  /** Bangun (atau bangun ulang) tilemap + layer + grid pathfinding dari cache key. */
+  private buildMap(cacheKey: string): void {
+    // Buang layer/tilemap lama agar tak menumpuk saat ganti lantai.
+    this.groundLayer?.destroy();
+    this.tilemap?.destroy();
+    this.groundLayer = null;
+    this.tilemap = null;
+
+    const map = this.make.tilemap({ key: cacheKey });
+    const tileset = map.addTilesetImage("office", TILESET_TEX);
+    if (tileset) {
+      const layer = map.createLayer("ground", tileset, 0, 0);
+      this.tilemap = map;
+      this.groundLayer = layer;
+      this.gridW = map.width;
+      this.gridH = map.height;
+      this.buildGrid(layer);
+      this.easystar.setGrid(this.grid);
     }
   }
 

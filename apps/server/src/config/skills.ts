@@ -27,6 +27,7 @@ export const KNOWN_SKILLS: readonly SkillCatalogEntry[] = [
   { name: "ig_post", description: "Publish ke Instagram (approval-gated).", implemented: true, risky: true },
   { name: "twitter_post", description: "Publish ke Twitter/X (approval-gated).", implemented: true, risky: true },
   { name: "schedule_post", description: "Jadwalkan publish konten (approval-gated).", implemented: true, risky: true },
+  { name: "send_outreach", description: "Kirim pesan penawaran 1:1 ke calon pembeli (email/DM/WA, approval-gated).", implemented: true, risky: true },
 ];
 
 /** Set nama skill yang dikenal (untuk validasi skillScope/skillPool). */

@@ -21,6 +21,7 @@ export type {
   NewWorkflowRun,
   NewApproval,
   NewAuditEntry,
+  NewUsageEvent,
 } from "./db/store.js";
 export { MysqlMemoryStore } from "./db/memoryStore.js";
 export { registerConfigRoutes } from "./api/routes.js";
@@ -30,6 +31,12 @@ export type { SeedDepartmentInput, SeededDepartment } from "./config/seed.js";
 export { KNOWN_SKILLS, KNOWN_SKILL_NAMES } from "./config/skills.js";
 export type { SkillCatalogEntry } from "./config/skills.js";
 export { RealtimeHub } from "./realtime.js";
+
+// KPI / pemantauan biaya (Phase 5.4)
+export { computeKpi } from "./kpi/kpi.js";
+export { recordLoopUsage } from "./kpi/recordUsage.js";
+export type { UsageScope } from "./kpi/recordUsage.js";
+export { DEFAULT_COST_RATES, costRatesFromEnv } from "./config/costRates.js";
 
 // Runtime registry + dispatch (Phase 2)
 export { DirectiveDispatcher } from "./registry/dispatcher.js";

@@ -9,7 +9,7 @@
  */
 
 import type { FastifyInstance, FastifyReply } from "fastify";
-import type { AgentStatus, Guardrail, Id, ModelPolicy, Vec2 } from "@vc/shared";
+import type { AgentStatus, CostRates, Guardrail, Id, ModelPolicy, Vec2 } from "@vc/shared";
 import {
   getDepartmentTemplate,
   listDepartmentTemplates,
@@ -17,6 +17,8 @@ import {
 import type { ConfigStore, NewAgent } from "../db/store.js";
 import { seedDepartmentFromTemplate } from "../config/seed.js";
 import { KNOWN_SKILLS } from "../config/skills.js";
+import { costRatesFromEnv } from "../config/costRates.js";
+import { computeKpi } from "../kpi/kpi.js";
 import type { DirectiveDispatcher } from "../registry/dispatcher.js";
 import type { WorkflowEngine } from "../workflow/engine.js";
 
@@ -27,6 +29,8 @@ export interface ConfigRoutesOptions {
   dispatcher?: DirectiveDispatcher;
   /** Workflow engine (Phase 3). Bila absent, endpoint directive departemen + approval 503. */
   workflowEngine?: WorkflowEngine;
+  /** Tarif biaya untuk KPI (Phase 5.4). Default dari env (`costRatesFromEnv`). */
+  costRates?: CostRates;
 }
 
 function bad(reply: FastifyReply, msg: string): FastifyReply {
@@ -90,6 +94,7 @@ export function registerConfigRoutes(
   const notify = (companyId: Id | undefined): void => {
     if (companyId) opts.onMutate?.(companyId);
   };
+  const costRates: CostRates = opts.costRates ?? costRatesFromEnv();
 
   // ---------------- Templates & skills (read-only katalog) ----------------
 
@@ -165,6 +170,13 @@ export function registerConfigRoutes(
     const { id } = req.params as { id: string };
     if (!(await store.getCompany(id))) return notFound(reply, `Company tidak ditemukan: ${id}`);
     return store.listAuditByCompany(id);
+  });
+
+  // KPI dashboard (Phase 5.4) — biaya LLM (per hari/departemen/tier) + aktivitas + status agent.
+  app.get("/api/companies/:id/kpi", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const report = await computeKpi(store, id, costRates);
+    return report ?? notFound(reply, `Company tidak ditemukan: ${id}`);
   });
 
   // ---------------- Floor ----------------

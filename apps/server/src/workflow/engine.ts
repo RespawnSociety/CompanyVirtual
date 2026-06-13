@@ -40,6 +40,7 @@ import {
 } from "@vc/agent-runtime";
 import type { ConfigStore } from "../db/store.js";
 import { EXTERNAL_POST_ACTIONS, RATE_LIMIT_WINDOW_MS, evaluateGuardrails } from "../security/guardrails.js";
+import { recordLoopUsage } from "../kpi/recordUsage.js";
 
 export interface WorkflowEngineDeps {
   store: ConfigStore;
@@ -309,6 +310,13 @@ export class WorkflowEngine {
       });
       finalText = result.finalText ?? "";
       status = result.status;
+      // Phase 5.4: catat pemakaian token (biaya). Tak boleh menggagalkan step → catch & log saja.
+      await recordLoopUsage(
+        store,
+        { companyId: dept.companyId, departmentId: dept.id, agentId: agent.id },
+        result.usage,
+        now(),
+      ).catch((e) => console.error("[kpi] recordLoopUsage:", e));
       // BUG-114: aksi BERISIKO yang GAGAL (mis. publish error pasca-approval) = terminal `blocked`.
       // Tanpa ini, model bisa membalas teks final → engine keliru menandai `done` padahal aksi
       // eksternal tak terjadi. (Skill non-risky yang gagal tak memblokir; biar agent menindaklanjuti.)

@@ -8,9 +8,22 @@
  */
 
 import mysql from "mysql2/promise";
+import { expect } from "vitest";
 import { ConfigStore } from "@vc/server";
 
-const TEST_DB = process.env.DB_MYSQL_TEST_DATABASE?.trim() || "virtual_company_test";
+const BASE_TEST_DB = process.env.DB_MYSQL_TEST_DATABASE?.trim() || "virtual_company_test";
+
+/**
+ * Nama database test PER FILE (`<base>_<namaFile>`). Isolasi antar-file: task latar/teardown
+ * file lain tak bisa men-TRUNCATE atau menulis data file ini (sumber flakiness sebelumnya).
+ * Diturunkan dari path file test yang sedang berjalan (`expect.getState().testPath`).
+ */
+function testDbName(): string {
+  const path = expect.getState().testPath ?? "";
+  const file = path.split(/[\\/]/).pop()?.replace(/\.test\.ts$/, "") ?? "shared";
+  const safe = file.replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 24) || "shared";
+  return `${BASE_TEST_DB}_${safe}`;
+}
 
 function baseConfig(): { host: string; port: number; user: string; password: string } {
   return {
@@ -23,6 +36,7 @@ function baseConfig(): { host: string; port: number; user: string; password: str
 
 /** Tabel yang di-TRUNCATE antar-test (urutan bebas karena FK checks dimatikan). */
 const TABLES = [
+  "usage_events",
   "audit_entries",
   "approvals",
   "workflow_runs",
@@ -38,20 +52,21 @@ const TABLES = [
   "memory_items",
 ] as const;
 
-/** Buat ConfigStore terhadap database test (dibuat bila belum ada) + pastikan skema. */
+/** Buat ConfigStore terhadap database test PER FILE (dibuat bila belum ada) + pastikan skema. */
 export async function createTestStore(): Promise<ConfigStore> {
   const cfg = baseConfig();
+  const db = testDbName();
   const admin = await mysql.createConnection(cfg);
   await admin.query(
-    `CREATE DATABASE IF NOT EXISTS \`${TEST_DB}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
+    `CREATE DATABASE IF NOT EXISTS \`${db}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
   );
   await admin.end();
-  return ConfigStore.create({ ...cfg, database: TEST_DB });
+  return ConfigStore.create({ ...cfg, database: db });
 }
 
-/** Kosongkan semua tabel test (panggil di beforeEach). Tabel harus sudah dibuat. */
+/** Kosongkan semua tabel database test FILE ini (panggil di beforeEach). Tabel harus sudah dibuat. */
 export async function resetTestDb(): Promise<void> {
-  const conn = await mysql.createConnection({ ...baseConfig(), database: TEST_DB });
+  const conn = await mysql.createConnection({ ...baseConfig(), database: testDbName() });
   try {
     await conn.query("SET FOREIGN_KEY_CHECKS=0");
     for (const t of TABLES) {

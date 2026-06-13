@@ -6,6 +6,7 @@
 import { useState } from "react";
 import type { Company, WorldSnapshot } from "@vc/shared";
 import { api } from "../api.js";
+import { MAP_CHOICES } from "../game/maps.js";
 import { useAsyncAction } from "../hooks/useAsyncAction.js";
 
 interface Props {
@@ -26,6 +27,7 @@ export function CompanySetup({
   const [name, setName] = useState("");
   const [color, setColor] = useState("#4f7cff");
   const [floorName, setFloorName] = useState("");
+  const [floorMapKey, setFloorMapKey] = useState(MAP_CHOICES[0]?.key ?? "office-default");
   const { busy, error, run } = useAsyncAction();
 
   const createCompany = (): Promise<void> =>
@@ -39,7 +41,7 @@ export function CompanySetup({
   const addFloor = (): Promise<void> =>
     run(async () => {
       if (!selectedCompanyId) return;
-      await api.createFloor(selectedCompanyId, { name: floorName.trim() });
+      await api.createFloor(selectedCompanyId, { name: floorName.trim(), mapKey: floorMapKey });
       setFloorName("");
       await reload();
     });
@@ -125,10 +127,20 @@ export function CompanySetup({
               onChange={(e) => setFloorName(e.target.value)}
               style={{ flex: 1 }}
             />
+            <select value={floorMapKey} onChange={(e) => setFloorMapKey(e.target.value)}>
+              {MAP_CHOICES.map((m) => (
+                <option key={m.key} value={m.key}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
             <button disabled={busy || floorName.trim().length === 0} onClick={() => void addFloor()}>
               Tambah lantai
             </button>
           </div>
+          <p className="hint">
+            Tiap lantai bisa pakai denah berbeda; pindah lantai di tab Kantor untuk melihatnya.
+          </p>
           <div className="list" style={{ marginTop: 12 }}>
             {!world || world.floors.length === 0 ? (
               <p className="empty">Belum ada lantai.</p>

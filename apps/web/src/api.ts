@@ -14,6 +14,7 @@ import type {
   Directive,
   Floor,
   Guardrail,
+  KpiReport,
   ModelPolicy,
   Task,
   Vec2,
@@ -92,6 +93,8 @@ export const api = {
   listComms: (id: string) => req<CommsMessage[]>(`/companies/${id}/comms`),
   // Audit log (Phase 4.3) — jejak aksi & approval.
   listAudit: (id: string) => req<AuditEntry[]>(`/companies/${id}/audit`),
+  // KPI dashboard (Phase 5.4) — biaya + aktivitas + status agent.
+  getKpi: (id: string) => req<KpiReport>(`/companies/${id}/kpi`),
 
   // Floor
   listFloors: (companyId: string) => req<Floor[]>(`/companies/${companyId}/floors`),

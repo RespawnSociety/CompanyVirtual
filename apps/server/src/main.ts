@@ -22,6 +22,8 @@ import {
   createTwitterPostSkill,
   createSchedulePostSkill,
   createPostPublisherFromEnv,
+  createSendOutreachSkill,
+  mockOutreachSender,
 } from "@vc/agent-runtime";
 import { CloudApiAdapter } from "./comms/cloudAdapter.js";
 import { MockWhatsAppAdapter } from "./comms/mockAdapter.js";
@@ -70,6 +72,8 @@ async function main(): Promise<void> {
   // Phase 4.2: publisher sosial via env (default mock/dry-run; POST_PROVIDER=playwright = nyata).
   const postPublisher = createPostPublisherFromEnv(env);
   const postProvider = (env.POST_PROVIDER?.trim().toLowerCase() || "mock");
+  // Phase 5.1: pengirim outreach Sales (default mock/dry-run; provider nyata SMTP/API menyusul).
+  const outreachSender = mockOutreachSender();
   const skills = new SkillRegistry().registerAll([
     createWebSearchSkill(),
     createWriteContentSkill(),
@@ -79,6 +83,7 @@ async function main(): Promise<void> {
     createIgPostSkill(postPublisher),
     createTwitterPostSkill(postPublisher),
     createSchedulePostSkill(postPublisher),
+    createSendOutreachSkill(outreachSender),
   ]);
   const router = createRouterFromEnv(env);
 

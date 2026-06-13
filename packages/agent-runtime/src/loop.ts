@@ -15,6 +15,7 @@ import type {
   ChatMessage,
   EmitFn,
   MemoryItem,
+  ModelTier,
   RouterClient,
   SkillContext,
   ToolCall,
@@ -51,6 +52,27 @@ export interface ToolRun {
   error?: string;
 }
 
+/** Akumulasi pemakaian token untuk satu tier (pemantauan biaya — Phase 5.4). */
+export interface TierUsageTotals {
+  calls: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
+/**
+ * Pemakaian LLM teragregasi untuk SATU loop agent (plan §8 — pemantauan biaya).
+ * `byTier` memecah token per tier (subscription/cheap/free) untuk estimasi biaya per-tarif.
+ * `calls` mencakup semua panggilan router; token hanya dijumlah saat respons membawa `usage`.
+ */
+export interface LoopUsage {
+  calls: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  byTier: Partial<Record<ModelTier, TierUsageTotals>>;
+}
+
 export interface AgentLoopResult {
   status: "done" | "blocked" | "max_steps";
   /** Teks balasan final agent (null bila blocked/max_steps tanpa teks). */
@@ -62,6 +84,8 @@ export interface AgentLoopResult {
   messages: ChatMessage[];
   /** Diisi saat status "blocked" karena menunggu approval. */
   pendingApproval?: ApprovalRequest;
+  /** Pemakaian token LLM selama loop (Phase 5.4 — biaya). */
+  usage: LoopUsage;
 }
 
 const EMPTY_VAULT: VaultReader = {
@@ -111,6 +135,13 @@ export async function runAgentLoop(
     };
 
     const toolRuns: ToolRun[] = [];
+    const usage: LoopUsage = {
+      calls: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      byTier: {},
+    };
     let status: AgentLoopResult["status"] = "max_steps";
     let finalText: string | null = null;
     let pendingApproval: ApprovalRequest | undefined;
@@ -128,6 +159,9 @@ export async function runAgentLoop(
         ...(tools.length > 0 ? { tools, toolChoice: "auto" } : {}),
         ...(agent.modelPolicy?.tier ? { tier: agent.modelPolicy.tier } : {}),
       });
+
+      // Phase 5.4: akumulasi pemakaian token (per tier) untuk pemantauan biaya.
+      accumulateUsage(usage, res.tierUsed ?? agent.modelPolicy?.tier, res.usage);
 
       messages.push(res.message);
 
@@ -194,6 +228,7 @@ export async function runAgentLoop(
       toolRuns,
       memoryWritten,
       messages,
+      usage,
       ...(pendingApproval ? { pendingApproval } : {}),
     };
   } catch (err) {
@@ -207,6 +242,32 @@ export async function runAgentLoop(
 // ------------------------------------------------------------
 // Helpers
 // ------------------------------------------------------------
+
+/**
+ * Akumulasi pemakaian token dari satu respons router ke total loop (Phase 5.4).
+ * Selalu menghitung `calls` (1 per panggilan); token dijumlah hanya bila `usage` tersedia.
+ * Token diatribusikan ke tier yang benar-benar menjawab (`tierUsed`) bila diketahui.
+ */
+function accumulateUsage(
+  acc: LoopUsage,
+  tier: ModelTier | undefined,
+  u: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined,
+): void {
+  acc.calls += 1;
+  const prompt = u?.promptTokens ?? 0;
+  const completion = u?.completionTokens ?? 0;
+  const total = u?.totalTokens ?? prompt + completion;
+  acc.promptTokens += prompt;
+  acc.completionTokens += completion;
+  acc.totalTokens += total;
+  const key: ModelTier = tier ?? "subscription";
+  const bucket = acc.byTier[key] ?? { calls: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  bucket.calls += 1;
+  bucket.promptTokens += prompt;
+  bucket.completionTokens += completion;
+  bucket.totalTokens += total;
+  acc.byTier[key] = bucket;
+}
 
 interface ToolCallOutcome {
   run: ToolRun;

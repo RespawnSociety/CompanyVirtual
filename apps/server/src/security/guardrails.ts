@@ -14,8 +14,16 @@ export interface GuardrailVerdict {
   reason?: string;
 }
 
-/** Aksi yang dihitung sebagai "posting eksternal" (untuk rate-limit). */
-export const EXTERNAL_POST_ACTIONS: readonly string[] = ["ig_post", "twitter_post", "schedule_post"];
+/**
+ * Aksi yang dihitung sebagai "aksi eksternal" untuk rate-limit (publish sosmed + outreach Sales).
+ * `send_outreach` (Phase 5.1) ikut dibatasi rate_limit agar guardrail berlaku lintas-departemen.
+ */
+export const EXTERNAL_POST_ACTIONS: readonly string[] = [
+  "ig_post",
+  "twitter_post",
+  "schedule_post",
+  "send_outreach",
+];
 
 /** Jendela rate-limit default = 24 jam (ms). */
 export const RATE_LIMIT_WINDOW_MS = 24 * 60 * 60 * 1000;

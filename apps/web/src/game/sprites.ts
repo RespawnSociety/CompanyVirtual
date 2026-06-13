@@ -26,6 +26,12 @@ const SPRITE_COLORS: Record<string, number> = {
   script_maker: 0xffcc66,
   reviewer: 0xc77dff,
   social_media: 0xff5d6c,
+  // Sales (Phase 5.1) — palet hangat agar departemen kedua terbedakan di lantai.
+  sales_manager: 0x4f7cff,
+  lead_researcher: 0x36c5a0,
+  proposal_writer: 0xf4a259,
+  sales_reviewer: 0xb892ff,
+  outreach_rep: 0xff8c42,
   default: 0x9aa6c2,
 };
 

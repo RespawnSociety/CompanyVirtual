@@ -27,6 +27,8 @@ import type {
   Guardrail,
   Id,
   ModelPolicy,
+  ModelTier,
+  UsageEvent,
   Vec2,
   WorkflowDef,
   WorkflowRun,
@@ -123,6 +125,18 @@ export interface NewAuditEntry {
   action: string;
   approvalId?: Id;
   detail?: Record<string, unknown>;
+}
+
+/** Input pencatatan pemakaian LLM (Phase 5.4; id/at diisi store). Satu baris per (loop, tier). */
+export interface NewUsageEvent {
+  companyId?: Id;
+  departmentId?: Id;
+  agentId: Id;
+  tier: ModelTier;
+  calls: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
 }
 
 /** Input pembuatan/replace agent (id auto bila tak diberi). */
@@ -1020,6 +1034,55 @@ export class ConfigStore {
     const approvalId = r["approval_id"] as Id | null;
     if (approvalId) entry.approvalId = approvalId;
     return entry;
+  }
+
+  // ---------------- Usage events (Phase 5.4 — biaya LLM) ----------------
+
+  /** Catat pemakaian token satu (loop, tier). Tak menyimpan baris bila tak ada panggilan. */
+  async addUsageEvent(input: NewUsageEvent, now = Date.now()): Promise<void> {
+    if (input.calls <= 0 && input.totalTokens <= 0) return;
+    const id = defaultGenId("use");
+    await this.run(
+      "INSERT INTO usage_events (id, company_id, department_id, agent_id, tier, calls, prompt_tokens, completion_tokens, total_tokens, at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        id,
+        input.companyId ?? null,
+        input.departmentId ?? null,
+        input.agentId,
+        input.tier,
+        input.calls,
+        input.promptTokens,
+        input.completionTokens,
+        input.totalTokens,
+        now,
+      ],
+    );
+  }
+
+  async listUsageByCompany(companyId: Id): Promise<UsageEvent[]> {
+    const rows = await this.all(
+      "SELECT * FROM usage_events WHERE company_id = ? ORDER BY at, id",
+      [companyId],
+    );
+    return rows.map((r) => this.rowToUsageEvent(r));
+  }
+
+  private rowToUsageEvent(r: Record<string, unknown>): UsageEvent {
+    const event: UsageEvent = {
+      id: r["id"] as Id,
+      companyId: r["company_id"] as Id,
+      agentId: r["agent_id"] as Id,
+      tier: r["tier"] as ModelTier,
+      calls: Number(r["calls"]),
+      promptTokens: Number(r["prompt_tokens"]),
+      completionTokens: Number(r["completion_tokens"]),
+      totalTokens: Number(r["total_tokens"]),
+      at: Number(r["at"]),
+    };
+    const departmentId = r["department_id"] as Id | null;
+    if (departmentId) event.departmentId = departmentId;
+    return event;
   }
 
   // ---------------- Comms ----------------

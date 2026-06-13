@@ -59,6 +59,10 @@ export class NineRouterClient implements RouterClient {
   private readonly fallbackOrder: ModelTier[];
   private readonly timeoutMs: number;
   private readonly defaultTemperature: number;
+  /** Phase 5.5: tier → epoch ms sampai kapan tier itu dilewati (cooldown setelah gagal). */
+  private readonly tierCooldownMs: number;
+  private readonly now: () => number;
+  private readonly tierCooldownUntil = new Map<ModelTier, number>();
 
   constructor(config: NineRouterConfig) {
     // Normalisasi: buang trailing slash agar penggabungan path konsisten.
@@ -68,6 +72,8 @@ export class NineRouterClient implements RouterClient {
     this.fallbackOrder = config.fallbackOrder ?? DEFAULT_FALLBACK_ORDER;
     this.timeoutMs = config.timeoutMs ?? 60_000;
     this.defaultTemperature = config.defaultTemperature ?? 0.7;
+    this.tierCooldownMs = config.tierCooldownMs ?? 0;
+    this.now = config.now ?? Date.now;
   }
 
   /**
@@ -93,7 +99,20 @@ export class NineRouterClient implements RouterClient {
       const model = this.models[tier];
       if (model) attempts.push({ tier, model });
     }
-    return attempts;
+    return this.filterCooldown(attempts);
+  }
+
+  /**
+   * Phase 5.5 — buang tier yang sedang cooldown (baru gagal). Tak pernah mengosongkan
+   * seluruh kandidat: bila semua ter-cooldown, kembalikan apa adanya (tetap dicoba).
+   */
+  private filterCooldown(
+    attempts: { tier: ModelTier; model: string }[],
+  ): { tier: ModelTier; model: string }[] {
+    if (this.tierCooldownMs <= 0) return attempts;
+    const now = this.now();
+    const healthy = attempts.filter((a) => (this.tierCooldownUntil.get(a.tier) ?? 0) <= now);
+    return healthy.length > 0 ? healthy : attempts;
   }
 
   async chat(req: ChatRequest): Promise<ChatResponse> {
@@ -109,9 +128,16 @@ export class NineRouterClient implements RouterClient {
 
     for (const { tier, model } of attempts) {
       try {
-        return await this.callOnce(req, tier, model);
+        const res = await this.callOnce(req, tier, model);
+        // Sukses → pulihkan tier dari cooldown (Phase 5.5).
+        if (this.tierCooldownMs > 0) this.tierCooldownUntil.delete(tier);
+        return res;
       } catch (err) {
         failures.push({ tier, model, error: errorMessage(err) });
+        // Tandai tier cooldown agar panggilan berikut melewatinya sementara (Phase 5.5).
+        if (this.tierCooldownMs > 0) {
+          this.tierCooldownUntil.set(tier, this.now() + this.tierCooldownMs);
+        }
         // Lanjut ke tier berikutnya (fallback).
       }
     }
