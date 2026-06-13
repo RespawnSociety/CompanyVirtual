@@ -5,7 +5,7 @@
  */
 
 import { useEffect, useState } from "react";
-import type { AgentProfile, ModelTier, WorldSnapshot } from "@vc/shared";
+import type { AgentProfile, Guardrail, ModelTier, WorldSnapshot } from "@vc/shared";
 import { api, type NewAgentInput, type SkillCatalogEntry } from "../api.js";
 import { useAsyncAction } from "../hooks/useAsyncAction.js";
 
@@ -25,7 +25,9 @@ interface FormState {
   spriteKey: string;
   description: string;
   skillScope: string[];
-  guardrails: string; // satu rule per baris
+  guardrails: string; // satu rule per baris (nama rule)
+  /** BUG-115: guardrail asal (lengkap dgn params) agar params tak hilang saat edit/save. */
+  guardrailsOriginal: Guardrail[];
   deskX: number;
   deskY: number;
   commsHandle: string;
@@ -41,6 +43,7 @@ const EMPTY: FormState = {
   description: "",
   skillScope: [],
   guardrails: "",
+  guardrailsOriginal: [],
   deskX: 3,
   deskY: 4,
   commsHandle: "",
@@ -94,6 +97,7 @@ export function CharacterEditor({ world, skills, reload }: Props): JSX.Element {
       description: a.description,
       skillScope: [...a.skillScope],
       guardrails: a.guardrails.map((g) => g.rule).join("\n"),
+      guardrailsOriginal: a.guardrails,
       deskX: a.deskPos.x,
       deskY: a.deskPos.y,
       commsHandle: a.commsHandle ?? "",
@@ -102,6 +106,9 @@ export function CharacterEditor({ world, skills, reload }: Props): JSX.Element {
     });
 
   const buildInput = (): NewAgentInput => {
+    // BUG-115: pertahankan `params` guardrail asal (mis. rate_limit.maxPostsPerDay) saat edit/save.
+    // Rule yang tak berubah → kirim ulang objek Guardrail lengkap (incl params); rule baru → { rule }.
+    const origByRule = new Map(form.guardrailsOriginal.map((g) => [g.rule, g]));
     const input: NewAgentInput = {
       name: form.name.trim(),
       role: form.role.trim(),
@@ -113,7 +120,7 @@ export function CharacterEditor({ world, skills, reload }: Props): JSX.Element {
         .split("\n")
         .map((l) => l.trim())
         .filter((l) => l.length > 0)
-        .map((rule) => ({ rule })),
+        .map((rule) => origByRule.get(rule) ?? { rule }),
     };
     // CR-102: kirim commsHandle apa adanya (termasuk "" untuk meng-clear saat edit).
     // Create: "" diabaikan server → default kosong. Edit: "" → server menghapus handle.

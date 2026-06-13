@@ -309,6 +309,15 @@ export class WorkflowEngine {
       });
       finalText = result.finalText ?? "";
       status = result.status;
+      // BUG-114: aksi BERISIKO yang GAGAL (mis. publish error pasca-approval) = terminal `blocked`.
+      // Tanpa ini, model bisa membalas teks final → engine keliru menandai `done` padahal aksi
+      // eksternal tak terjadi. (Skill non-risky yang gagal tak memblokir; biar agent menindaklanjuti.)
+      if (
+        status !== "blocked" &&
+        result.toolRuns.some((t) => !t.ok && this.deps.skills.get(t.skill)?.risky === true)
+      ) {
+        status = "blocked";
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       await store.updateTask(task.id, { status: "blocked" });

@@ -56,6 +56,32 @@ function asAgentStatus(v: unknown): AgentStatus | undefined {
     : undefined;
 }
 
+/**
+ * BUG-115: rule guardrail berparameter WAJIB punya params valid — cegah `rate_limit`/`posting_hours`
+ * nonaktif diam-diam (mis. UI lama yang membuang `params`). Kembalikan pesan error atau undefined.
+ */
+function guardrailParamError(guardrails: unknown): string | undefined {
+  if (!Array.isArray(guardrails)) return undefined;
+  const isHour = (x: unknown): boolean =>
+    typeof x === "number" && Number.isInteger(x) && x >= 0 && x <= 23;
+  for (const g of guardrails) {
+    if (typeof g !== "object" || g === null) return "Setiap guardrail harus objek { rule, params? }.";
+    const rule = (g as Record<string, unknown>)["rule"];
+    if (typeof rule !== "string" || rule.trim() === "") return "Guardrail 'rule' wajib string non-kosong.";
+    const params = (g as Record<string, unknown>)["params"] as Record<string, unknown> | undefined;
+    if (rule === "rate_limit") {
+      const v = params?.["maxPostsPerDay"];
+      if (typeof v !== "number" || !Number.isFinite(v) || v < 0) {
+        return "Guardrail 'rate_limit' wajib params.maxPostsPerDay (number ≥ 0).";
+      }
+    }
+    if (rule === "posting_hours" && !(isHour(params?.["from"]) && isHour(params?.["to"]))) {
+      return "Guardrail 'posting_hours' wajib params.from & params.to (jam 0..23).";
+    }
+  }
+  return undefined;
+}
+
 export function registerConfigRoutes(
   app: FastifyInstance,
   store: ConfigStore,
@@ -279,6 +305,8 @@ export function registerConfigRoutes(
     const name = asStr(body["name"]);
     const role = asStr(body["role"]);
     if (!name || !role) return bad(reply, "Agent butuh 'name' dan 'role'.");
+    const gErr = guardrailParamError(body["guardrails"]);
+    if (gErr) return bad(reply, gErr);
     const commsHandle = asStr(body["commsHandle"]);
     const input: NewAgent = {
       name,
@@ -315,7 +343,11 @@ export function registerConfigRoutes(
     if (typeof body["description"] === "string") patch.description = body["description"];
     const skillScope = asStrArray(body["skillScope"]);
     if (skillScope) patch.skillScope = skillScope;
-    if (Array.isArray(body["guardrails"])) patch.guardrails = body["guardrails"] as Guardrail[];
+    if ("guardrails" in body) {
+      const gErr = guardrailParamError(body["guardrails"]);
+      if (gErr) return bad(reply, gErr);
+      if (Array.isArray(body["guardrails"])) patch.guardrails = body["guardrails"] as Guardrail[];
+    }
     // CR-102: commsHandle opsional & bisa dikosongkan — key hadir (mis. "") → clear; absent → tetap.
     if ("commsHandle" in body) patch.commsHandle = asStr(body["commsHandle"]) ?? "";
     if (typeof body["modelPolicy"] === "object" && body["modelPolicy"] !== null) {

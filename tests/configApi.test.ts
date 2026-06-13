@@ -138,6 +138,55 @@ describe("REST config API via inject (Phase 1.3–1.7)", () => {
     expect(res.statusCode).toBe(503);
   });
 
+  it("BUG-115: guardrail rate_limit/posting_hours tanpa params valid → 400 (tak bisa nonaktifkan)", async () => {
+    const co = (
+      await app.inject({ method: "POST", url: "/api/companies", payload: { name: "Guard Co" } })
+    ).json() as { id: string };
+    const fl = (
+      await app.inject({ method: "POST", url: `/api/companies/${co.id}/floors`, payload: { name: "L1" } })
+    ).json() as { id: string };
+    const seeded = (
+      await app.inject({
+        method: "POST",
+        url: `/api/floors/${fl.id}/departments`,
+        payload: { templateId: MARKETING_TEMPLATE_ID },
+      })
+    ).json() as { department: { id: string }; agents: { id: string; role: string }[] };
+    const social = seeded.agents.find((a) => a.role === "Social Media")!;
+
+    // PATCH yang membuang params rate_limit (bug UI lama) → DITOLAK 400.
+    const stripped = await app.inject({
+      method: "PATCH",
+      url: `/api/agents/${social.id}`,
+      payload: { guardrails: [{ rule: "rate_limit" }, { rule: "approval_required_for_external_actions" }] },
+    });
+    expect(stripped.statusCode).toBe(400);
+
+    // PATCH dgn params lengkap → OK 200, params tersimpan.
+    const ok = await app.inject({
+      method: "PATCH",
+      url: `/api/agents/${social.id}`,
+      payload: {
+        guardrails: [
+          { rule: "rate_limit", params: { maxPostsPerDay: 5 } },
+          { rule: "approval_required_for_external_actions" },
+        ],
+      },
+    });
+    expect(ok.statusCode).toBe(200);
+    const saved = (ok.json() as { guardrails: { rule: string; params?: { maxPostsPerDay?: number } }[] })
+      .guardrails.find((g) => g.rule === "rate_limit");
+    expect(saved?.params?.maxPostsPerDay).toBe(5);
+
+    // POST agent baru dgn posting_hours tanpa jam valid → 400.
+    const badPost = await app.inject({
+      method: "POST",
+      url: `/api/departments/${seeded.department.id}/agents`,
+      payload: { name: "X", role: "Y", guardrails: [{ rule: "posting_hours", params: { from: 8 } }] },
+    });
+    expect(badPost.statusCode).toBe(400);
+  });
+
   it("CR-102: PATCH bisa mengosongkan commsHandle (agent) & workflowId (department)", async () => {
     const co = (
       await app.inject({ method: "POST", url: "/api/companies", payload: { name: "Clear Co" } })

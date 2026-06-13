@@ -25,12 +25,12 @@ import {
   MockRouterClient,
   textResponse,
   toolCallResponse,
+  type PostPublisher,
 } from "@vc/agent-runtime";
 import { MARKETING_TEMPLATE } from "@vc/templates";
 import { createTestStore, resetTestDb } from "./helpers/mysql.js";
 
-function skillsWithSocial(): SkillRegistry {
-  const pub = mockPostPublisher();
+function skillsWithSocial(pub: PostPublisher = mockPostPublisher()): SkillRegistry {
   return new SkillRegistry().registerAll([
     createWebSearchSkill(),
     createWriteContentSkill(),
@@ -155,5 +155,35 @@ describe("Phase 4 — publish (approval gate → guardrail → dry-run)", () => 
     expect(audit.some((a) => a.action === "publish_blocked")).toBe(true);
     // Tidak ada posting NYATA tambahan (hanya 5 pra-isi; tak ada schedule_post baru dari run ini).
     expect(audit.filter((a) => a.action === "schedule_post").length).toBe(5);
+  });
+
+  it("BUG-114: publisher GAGAL pasca-approval → run blocked + audit *_failed (bukan done diam-diam)", async () => {
+    const { companyId, departmentId } = await seedMarketing(store);
+    const failing: PostPublisher = {
+      publish: () => Promise.reject(new Error("Playwright gagal login (simulasi)")),
+    };
+    const engine = new WorkflowEngine({
+      store,
+      router: new MockRouterClient([publishResponder]),
+      skills: skillsWithSocial(failing),
+      memory: store.createMemoryStore(),
+      emitAgentEvent: () => {},
+    });
+
+    const { directive, done } = await engine.startForDepartment(departmentId, "Publish promo", "ui");
+    const paused = await done;
+    expect(paused.status).toBe("awaiting_approval");
+
+    const resumed = await engine.resumeByApproval(paused.approvalId!, "approve");
+    expect(resumed!.status).toBe("blocked"); // BUKAN done
+    expect((await store.getDirective(directive.id))!.status).toBe("blocked");
+
+    const audit = await store.listAuditByCompany(companyId);
+    const actions = audit.map((a) => a.action);
+    expect(actions).toContain("publish_authorized"); // guardrail lolos, aksi diizinkan
+    expect(actions).toContain("schedule_post_failed"); // kegagalan ter-audit
+    expect(actions).not.toContain("schedule_post"); // tak ada sukses palsu
+    const failed = audit.find((a) => a.action === "schedule_post_failed");
+    expect(String(failed!.detail["reason"])).toMatch(/gagal login/);
   });
 });

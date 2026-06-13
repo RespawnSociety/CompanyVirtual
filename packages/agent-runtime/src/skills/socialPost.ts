@@ -132,10 +132,22 @@ function makeHandler(
     };
 
     const preview = buildPreview(req);
-    const result = await publisher.publish(req, {
-      vault: ctx.vault,
-      ...(ctx.signal ? { signal: ctx.signal } : {}),
-    });
+    let result: SocialPostResult;
+    try {
+      result = await publisher.publish(req, {
+        vault: ctx.vault,
+        ...(ctx.signal ? { signal: ctx.signal } : {}),
+      });
+    } catch (err) {
+      // BUG-114: publish GAGAL (kredensial/Playwright/network) WAJIB ter-audit, lalu rethrow
+      // agar engine memblokir run (jangan diam-diam `done`). `reason` non-secret.
+      const reason = err instanceof Error ? err.message : String(err);
+      await ctx.audit?.({
+        action: `${name}_failed`,
+        detail: { platform, preview, reason },
+      });
+      throw err;
+    }
 
     // Audit aksi eksternal (§4.3): preview + hasil (TANPA secret).
     await ctx.audit?.({
