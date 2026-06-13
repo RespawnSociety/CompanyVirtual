@@ -7,7 +7,7 @@
 > **Catatan pembersihan 2026-06-13:** entri `VERIFIED_FIXED` umumnya dihapus dari daftar aktif setelah dicek ulang; entri verified yang masih tertulis dipertahankan sebagai bukti verifikasi terbaru.
 > **Catatan sweep Phase 0-3 2026-06-13:** `packages/shared`, `packages/agent-runtime`, `packages/templates`, `apps/server`, dan `apps/web` direview ulang, dengan fokus tambahan `WorkflowEngine`, `workflow_runs`, approval gate, dan `WorkflowPanel`. Gate observasi terbaru: `npm run build`, `npm run lint`, `npx tsc -p apps/web/tsconfig.json --noEmit`, `npm test` (59 passed). `BUG-112/113` sudah diverifikasi beres oleh Codex dan dihapus dari daftar aktif.
 > **Catatan Phase 4 2026-06-13:** review keamanan Phase 4 (vault, guardrails, auth, audit, skill sosial) selesai. Gate: `npm run build`, `npm run lint`, `npx tsc -p apps/web/tsconfig.json --noEmit`, `npm run build:web`, `npm test` **87 passed**. `BUG-107/108` -> `VERIFIED_FIXED`; temuan baru: `BUG-114/115` `OPEN`.
-> **Update Claude 2026-06-13 (fix BUG-114/115):** kedua temuan Codex di-FIX (status `FIXED`, menunggu verifikasi Codex). BUG-114: skill `risky` gagal → run `blocked` + audit `*_failed` (engine `runStep` + `socialPost`). BUG-115: `CharacterEditor` pertahankan `params` guardrail + validasi server PATCH/POST agent (`rate_limit`/`posting_hours` wajib params, else 400). Gate ulang: `npm test` **89 passed** (+ `publish.test.ts` failure case, `configApi.test.ts` guardrail validation), build/lint/typecheck:web hijau.
+> **Verifikasi Codex 2026-06-13 (BUG-114/115):** kedua fix sudah `VERIFIED_FIXED`. Gate ulang Codex: `npm run build`, `npm run lint`, `npx tsc -p apps/web/tsconfig.json --noEmit`, `npm test` **89 passed**. BUG-114 terverifikasi via risky tool failure → run/directive `blocked` + audit `*_failed`; BUG-115 terverifikasi via preserve `guardrail.params` di UI + validasi server 400 untuk params hilang.
 
 ## Legenda Status
 `OPEN` (terverifikasi, belum dikerjakan) | `FIXING` (Claude kerjakan) | `FIXED` (Claude klaim, tunggu verifikasi) | `VERIFIED_FIXED` (Codex konfirmasi beres) | `REOPENED` (Codex tolak, ada bukti) | `FALSE_POSITIVE` | `WONTFIX`
@@ -17,8 +17,8 @@
 |---|---|---|---|---|
 | BUG-107 | `API_AUTH_TOKEN` membuat REST terlindungi, tetapi web client tidak pernah mengirim bearer | high | VERIFIED_FIXED | `apps/web/src/api.ts`, `apps/server/src/server.ts` |
 | BUG-108 | Socket realtime tetap bisa mengambil `world:sync` tanpa auth saat REST sudah dilindungi token | high | VERIFIED_FIXED | `apps/server/src/realtime.ts`, `apps/server/src/security/auth.ts` |
-| BUG-114 | Gagal publish eksternal pasca-approval bisa berakhir `done` tanpa audit kegagalan | high | FIXED | `apps/server/src/workflow/engine.ts`, `packages/agent-runtime/src/skills/socialPost.ts` |
-| BUG-115 | Edit agent di UI menghapus parameter guardrail sehingga `rate_limit` tidak aktif | high | FIXED | `apps/web/src/components/CharacterEditor.tsx`, `apps/server/src/api/routes.ts` |
+| BUG-114 | Gagal publish eksternal pasca-approval bisa berakhir `done` tanpa audit kegagalan | high | VERIFIED_FIXED | `apps/server/src/workflow/engine.ts`, `packages/agent-runtime/src/skills/socialPost.ts` |
+| BUG-115 | Edit agent di UI menghapus parameter guardrail sehingga `rate_limit` tidak aktif | high | VERIFIED_FIXED | `apps/web/src/components/CharacterEditor.tsx`, `apps/server/src/api/routes.ts` |
 
 ---
 
@@ -165,7 +165,7 @@ Verifikasi #2 (observasi/test): `tests/auth.test.ts:66-83` membuktikan socket ta
 
 ### BUG-114 - Gagal publish eksternal pasca-approval bisa berakhir `done` tanpa audit kegagalan
 
-- **Status:** FIXED
+- **Status:** VERIFIED_FIXED
 - **Severity:** high
 - **Category:** logic / security / runtime
 - **Location:** `packages/agent-runtime/src/loop.ts:284`, `apps/server/src/workflow/engine.ts:325`, `packages/agent-runtime/src/skills/socialPost.ts:135`
@@ -230,14 +230,18 @@ Probe runtime memakai workflow publish nyata, approval nyata, dan publisher inje
 2. `packages/agent-runtime/src/skills/socialPost.ts`: bungkus `publisher.publish` dengan try/catch — saat gagal, audit `\`${name}_failed\`` (`{ platform, preview, reason }`, reason non-secret) lalu rethrow. Jadi kegagalan SELALU ter-audit sebelum keluar.
 3. Test `tests/publish.test.ts` ("BUG-114: publisher GAGAL pasca-approval → run blocked + audit *_failed"): publisher throw → `resumed.status === "blocked"`, directive `blocked`, audit memuat `publish_authorized` + `schedule_post_failed`, TANPA `schedule_post` (tak ada sukses palsu).
 
-**Catatan verifikasi perbaikan**
-Menunggu verifikasi Codex. Bukti sementara: `tests/publish.test.ts` (3 kasus: dry-run sukses, guardrail block, failure block) + `npm test` **89 passed**, build/lint/typecheck:web hijau.
+**Catatan verifikasi perbaikan (Codex 2026-06-13)**
+`VERIFIED_FIXED`.
+
+Verifikasi #1 (pembacaan kode): `apps/server/src/workflow/engine.ts:315-320` memaksa status menjadi `blocked` bila ada `ToolRun.ok === false` dari skill `risky`; `apps/server/src/workflow/engine.ts:334-336` lalu menyimpan task sebagai `blocked`; `packages/agent-runtime/src/skills/socialPost.ts:136-149` meng-audit `${name}_failed` dengan preview/reason non-secret sebelum melempar error lagi.
+
+Verifikasi #2 (observasi/test): `tests/publish.test.ts:160-187` menutup kasus publisher gagal pasca-approval dan memastikan run/directive `blocked`, audit berisi `schedule_post_failed`, dan tidak ada sukses palsu `schedule_post`. Gate Codex 2026-06-13 hijau: `npm run build`, `npm run lint`, `npx tsc -p apps/web/tsconfig.json --noEmit`, `npm test` (**89 passed**). Akar masalah `done` palsu pasca-gagal publish sudah hilang.
 
 ---
 
 ### BUG-115 - Edit agent di UI menghapus parameter guardrail sehingga `rate_limit` tidak aktif
 
-- **Status:** FIXED
+- **Status:** VERIFIED_FIXED
 - **Severity:** high
 - **Category:** security / logic
 - **Location:** `apps/web/src/components/CharacterEditor.tsx:96`, `apps/web/src/components/CharacterEditor.tsx:116`, `apps/server/src/security/guardrails.ts:57`
@@ -302,5 +306,9 @@ Template Marketing membuat `rate_limit` berparameter. `CharacterEditor` membuang
 2. `apps/server/src/api/routes.ts` (defense-in-depth): helper `guardrailParamError` memvalidasi POST & PATCH agent — `rate_limit` wajib `params.maxPostsPerDay` (number ≥ 0), `posting_hours` wajib `params.from`/`to` (jam 0..23); selain itu **400**. Klien apa pun (termasuk UI lama) tak bisa lagi menyimpan guardrail param-rule tanpa params.
 3. Test `tests/configApi.test.ts` ("BUG-115: guardrail rate_limit/posting_hours tanpa params valid → 400"): PATCH membuang params → 400; PATCH params lengkap → 200 & tersimpan; POST posting_hours tanpa jam valid → 400.
 
-**Catatan verifikasi perbaikan**
-Menunggu verifikasi Codex. Bukti sementara: `tests/configApi.test.ts` + `npm test` **89 passed**, build/lint/typecheck:web hijau. Catatan: validasi server menolak `rate_limit`/`posting_hours` tanpa params valid — bila ke depan diinginkan "rate_limit tanpa batas", gunakan rule berbeda atau params eksplisit.
+**Catatan verifikasi perbaikan (Codex 2026-06-13)**
+`VERIFIED_FIXED`.
+
+Verifikasi #1 (pembacaan kode): `apps/web/src/components/CharacterEditor.tsx:99-123` menyimpan `guardrailsOriginal` dan memakai objek asli saat rule tidak berubah, sehingga `params` tidak hilang saat buka+save. Defense-in-depth server ada di `apps/server/src/api/routes.ts:63-80`, dipakai untuk POST agent di `apps/server/src/api/routes.ts:308-309` dan PATCH agent di `apps/server/src/api/routes.ts:346-349`, sehingga `rate_limit`/`posting_hours` tanpa params valid ditolak 400.
+
+Verifikasi #2 (observasi/test): `tests/configApi.test.ts:141-185` membuktikan PATCH yang membuang params `rate_limit` ditolak 400, PATCH dengan params lengkap tersimpan, dan POST `posting_hours` tanpa jam valid ditolak 400. Gate Codex 2026-06-13 hijau: `npm run build`, `npm run lint`, `npx tsc -p apps/web/tsconfig.json --noEmit`, `npm test` (**89 passed**). Akar masalah params guardrail hilang lalu rate limit nonaktif sudah tertutup.
