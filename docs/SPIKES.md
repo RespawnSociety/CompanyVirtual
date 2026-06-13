@@ -232,6 +232,38 @@ Jalur HTTP/Cloud nyata: jalankan server lalu daftarkan webhook (lihat RUNBOOK).
   & socket (`handshake.auth.token`). Strategi = **token dev build-time** (ter-embed di bundle → dev/token
   bersama; produksi pakai reverse-proxy/login, didokumentasikan).
 
+## Phase 6 — keputusan teknis (app packaging: shell desktop Tauri)
+
+- **Tauri v2 (keputusan owner, sesuai plan §10).** Shell `apps/desktop` (Rust) membungkus web. Dipilih
+  Tauri (bukan Electron) sesuai stack plan — binari ramping, pakai WebView2 OS. *Trade-off:* butuh
+  toolchain **Rust + MSVC** untuk build; di mesin dev saat ini Rust belum terpasang → kode shell + DoD
+  runtime "dobel-klik" diverifikasi owner. Semua yang **tak butuh Rust** sudah dipastikan (typecheck/lint/
+  build web, test 104/104, `tauri info` membaca config + WebView2 terdeteksi).
+- **Shell MENJALANKAN orchestrator, MEMANTAU 9Router/MySQL.** `src-tauri/src/service.rs`: spawn
+  `node apps/server/dist/main.js` sebagai proses anak saat setup (cwd = root repo agar `.env`/`data/`/
+  `node_modules` ketemu), kill saat jendela `Destroyed`. 9Router (decolua/9router) & MySQL (XAMPP) =
+  layanan eksternal milik owner → hanya **dipantau** (TCP connect ke `:8787`/`:20128`/`:3306`). Bila port
+  server sudah hidup (mis. `dev:server` manual) shell tak spawn dobel. Monitoring via TCP (bukan HTTP)
+  = nol dependensi crate tambahan + tahan TLS. Status diekspos command `service_status`/`restart_server`.
+- **Web pakai URL absolut HANYA di rilis desktop.** Webview rilis di-host dari custom protocol
+  (`tauri://localhost`) → URL relatif tak menjangkau `:8787`. Solusi: build mode `desktop`
+  (`apps/web/.env.desktop` → `VITE_API_BASE_URL=http://127.0.0.1:8787`), dibaca `SERVER_URL` di `api.ts`
+  (REST) & `socket.ts` (socket.io `io(url, opts)`). Di **browser/dev** env kosong → perilaku lama (URL
+  relatif, proxy Vite) tak berubah → **web tetap independen dari Tauri** (DoD 6.2 "juga jalan di browser").
+  `.env.desktop` di-commit (dikecualikan `.gitignore`) karena hanya alamat lokal, bukan secret. CSP
+  `connect-src` dibatasi ke loopback `:8787`/`:20128` (least-privilege).
+- **Deteksi shell tanpa kopling.** Web tak `import` paket Tauri; pakai global `window.__TAURI__`
+  (`withGlobalTauri: true`) lewat `apps/web/src/desktop.ts` (no-op di browser). Widget `ServiceStatus`
+  hanya render di shell. Tak ada panggilan LLM — polling status sekadar cek port (selaras prinsip
+  "tak ada LLM per-tick").
+- **Responsif (6.2) = Phaser FIT, bukan CSS-scale mentah.** `bootGame.ts` set `scale.mode=FIT` agar
+  Scale Manager Phaser yang memetakan koordinat pointer ke resolusi dasar → klik-untuk-berjalan tetap
+  akurat di segala ukuran (CSS-scale mentah akan menggeser klik). Resolusi internal (tile/pathfinding)
+  tak berubah. Chrome (tab/topbar/panel/world) responsif via media queries `styles.css`.
+- **Distribusi penuh = follow-up.** Build rilis kini asumsi Node di PATH + repo lokal. Bundle ke mesin
+  tanpa repo butuh kemas `apps/server/dist` + `node_modules` sebagai Tauri resource (atau server jadi
+  binari) + `VC_SERVER_ENTRY`/resource `server/main.js`. Ditunda agar bundle tak membengkak.
+
 ## Kontrak yang dikunci di Phase 0
 
 - **`@vc/shared`** — sumber kebenaran tipe: data model (plan §9), `AgentEvent`, kontrak
@@ -245,3 +277,4 @@ Jalur HTTP/Cloud nyata: jalankan server lalu daftarkan webhook (lihat RUNBOOK).
 - §13.3 WhatsApp awal — **Cloud API + Mock**; Baileys ditunda.
 - §13.6 Comms — **satu nomor, Manager sebagai wajah** (default diikuti).
 - §13.7 Owner/whitelist — via `WA_OWNER_NUMBERS` (banyak nomor didukung).
+- §13.9 Bentuk app — **desktop Tauri** (default diikuti, Phase 6); mobile companion (6.3) opsional/menyusul.

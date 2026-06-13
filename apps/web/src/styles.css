@@ -66,6 +66,24 @@ body {
 .conn-dot.on {
   background: var(--accent-2);
 }
+.conn-dot.down {
+  background: var(--danger);
+}
+
+/* Phase 6.1 — indikator layanan lokal (hanya tampil di shell desktop Tauri). */
+.svc-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-right: 4px;
+}
+.svc {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+}
 
 .tabs {
   display: flex;
@@ -73,6 +91,11 @@ body {
   padding: 0 12px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
+  /* Phase 6.2: di layar sempit, tab bisa di-scroll horizontal alih-alih meluber/terpotong. */
+  overflow-x: auto;
+}
+.tab {
+  white-space: nowrap;
 }
 
 .tab {
@@ -233,6 +256,18 @@ button.danger {
   display: flex;
   gap: 16px;
   align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+/* Phase 6.2: kolom panggung game fleksibel (maks = resolusi dasar 640px) + sisi info. */
+.world-stage {
+  flex: 1 1 420px;
+  min-width: 0;
+  max-width: 640px;
+}
+.world-side {
+  flex: 1 1 240px;
+  max-width: 320px;
 }
 
 #game-host {
@@ -240,6 +275,10 @@ button.danger {
   border-radius: 8px;
   overflow: hidden;
   background: #000;
+  /* Phaser (mode FIT) menskala canvas ke kotak ini; rasio 640:448 (20×14 petak @32px). */
+  width: 100%;
+  max-width: 640px;
+  aspect-ratio: 640 / 448;
 }
 
 .hint {
@@ -264,4 +303,32 @@ button.danger {
 }
 .checkbox-grid input {
   width: auto;
+}
+
+/* ============================================================
+ * Phase 6.2 — Web responsif (layar sempit / jendela kecil / mobile).
+ * Topbar & tab membungkus/menggulir, panel & kolom world menumpuk.
+ * ============================================================ */
+@media (max-width: 760px) {
+  .topbar {
+    flex-wrap: wrap;
+    gap: 8px 12px;
+  }
+  .topbar h1 {
+    font-size: 15px;
+  }
+  .topbar .grow {
+    display: none;
+  }
+  .content {
+    padding: 12px;
+  }
+  .panel {
+    max-width: 100%;
+  }
+  .world-stage,
+  .world-side {
+    flex-basis: 100%;
+    max-width: 100%;
+  }
 }

@@ -15,6 +15,7 @@ import { TaskBoard } from "./components/TaskBoard.js";
 import { CommsViewer } from "./components/CommsViewer.js";
 import { WorkflowPanel } from "./components/WorkflowPanel.js";
 import { KpiDashboard } from "./components/KpiDashboard.js";
+import { ServiceStatus } from "./components/ServiceStatus.js";
 
 type Tab = "world" | "company" | "departments" | "characters" | "workflow" | "tasks" | "kpi" | "comms";
 
@@ -156,6 +157,7 @@ export function App(): JSX.Element {
           </select>
         </div>
         <div className="grow" />
+        <ServiceStatus />
         <div className="company-select">
           <span className={`conn-dot ${connected ? "on" : ""}`} />
           <span className="muted">{connected ? "realtime tersambung" : "offline"}</span>

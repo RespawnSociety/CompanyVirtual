@@ -33,6 +33,8 @@ vault/
 *.secret
 credentials.json
 service-account*.json
+# Pengecualian: config build desktop (Phase 6) — hanya alamat lokal, BUKAN secret.
+!apps/web/.env.desktop
 
 # WhatsApp (Baileys) session / auth state — berisi kredensial sesi
 auth_info/
@@ -54,3 +56,12 @@ Thumbs.db
 
 # Tauri (fase 6)
 apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
+# Ikon platform hasil generate `tauri icon` (sumber icon.png tetap di-commit).
+apps/desktop/src-tauri/icons/32x32.png
+apps/desktop/src-tauri/icons/128x128.png
+apps/desktop/src-tauri/icons/128x128@2x.png
+apps/desktop/src-tauri/icons/icon.ico
+apps/desktop/src-tauri/icons/icon.icns
+apps/desktop/src-tauri/icons/Square*.png
+apps/desktop/src-tauri/icons/StoreLogo.png

@@ -1,0 +1,16 @@
+{
+  "name": "@vc/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Shell desktop Tauri (Phase 6) — bungkus web (FACE) + jalankan & pantau orchestrator lokal (apps/server) serta 9Router/MySQL.",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "frontend:dev": "npm --prefix ../.. run dev:web",
+    "frontend:build": "npm --prefix ../.. run build:web:desktop"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.1.0"
+  }
+}

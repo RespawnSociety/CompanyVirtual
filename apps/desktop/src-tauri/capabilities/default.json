@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Kapabilitas default window utama: core Tauri (event/window/webview). Command aplikasi (service_status, restart_server) dapat dipanggil dari frontend tanpa izin plugin tambahan.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

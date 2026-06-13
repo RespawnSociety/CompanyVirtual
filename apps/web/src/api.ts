@@ -38,7 +38,17 @@ export interface CreateDepartmentResult {
   workflow: WorkflowDef | null;
 }
 
-const BASE = "/api";
+/**
+ * Origin server (Phase 6). Kosong (default browser/dev) → URL relatif: di dev di-proxy Vite
+ * (same-origin), di hosting same-origin dengan server. Di-SET absolut (mis. `http://127.0.0.1:8787`)
+ * untuk shell desktop **Tauri**: webview memuat aset dari custom protocol (`tauri://localhost`),
+ * sehingga URL relatif tak akan menjangkau orchestrator lokal. Build-time via `VITE_API_BASE_URL`
+ * (trailing slash dibuang). Server sudah kirim CORS `*` default → request lintas-origin diizinkan.
+ */
+export const SERVER_URL: string =
+  (import.meta.env?.VITE_API_BASE_URL as string | undefined)?.trim().replace(/\/+$/, "") || "";
+
+const BASE = `${SERVER_URL}/api`;
 
 /**
  * Token bearer opsional (BUG-107/CR-101). Bila server dilindungi `API_AUTH_TOKEN`, web HARUS

@@ -30,6 +30,14 @@ export function bootGame(parent: HTMLElement): GameHandle {
     height: MAP_H * TILE.HEIGHT,
     backgroundColor: "#0f1420",
     pixelArt: true,
+    // Phase 6.2: skala canvas mengikuti ukuran kontainer (responsif) sambil menjaga rasio.
+    // Mode FIT: Phaser yang mengelola ukuran tampilan canvas DAN memetakan koordinat pointer
+    // kembali ke resolusi dasar (MAP_W×MAP_H tile), jadi klik-untuk-berjalan tetap akurat
+    // di layar kecil/besar. Resolusi internal (logika tile/pathfinding) tak berubah.
+    scale: {
+      mode: Phaser.Scale.FIT,
+      autoCenter: Phaser.Scale.CENTER_BOTH,
+    },
     scene: [OfficeScene],
   });
 

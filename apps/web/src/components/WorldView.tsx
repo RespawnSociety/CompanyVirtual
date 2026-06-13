@@ -76,10 +76,10 @@ export function WorldView({
 
   return (
     <div className="world-wrap">
-      <div>
+      <div className="world-stage">
         <div id="game-host" ref={hostRef} />
       </div>
-      <div>
+      <div className="world-side">
         <div className="panel" style={{ minWidth: 240 }}>
           <h2>Lantai</h2>
           {!world || world.floors.length === 0 ? (

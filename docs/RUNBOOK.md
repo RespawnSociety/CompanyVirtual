@@ -323,6 +323,63 @@ npm test    # 104 test — + sales template/skill (send_outreach), KPI computeKp
 
 ---
 
+## Phase 6 — App Packaging 📦 (shell desktop Tauri)
+
+Bungkus web (FACE) jadi aplikasi desktop yang **dobel-klik → service lokal hidup → platform jalan**,
+sekaligus **tetap jalan di browser**. Shell `apps/desktop` (Tauri v2): memuat web, **men-spawn**
+orchestrator (`node apps/server/dist/main.js`) + menghentikannya saat ditutup, dan **memantau**
+orchestrator/9Router/MySQL (indikator status di topbar). Detail: `apps/desktop/README.md`.
+
+### Catatan teknis
+- **Integrasi web:** webview rilis di-host dari custom protocol → web pakai **URL absolut** ke
+  `http://127.0.0.1:8787`. Disetel saat build mode `desktop` (`apps/web/.env.desktop` →
+  `VITE_API_BASE_URL`), dibaca `apps/web/src/api.ts` & `socket.ts`. Di **browser/dev** env ini kosong →
+  URL relatif (proxy Vite) seperti fase sebelumnya — web tak bergantung pada Tauri.
+- **Responsif (6.2):** Phaser mode **FIT** (`apps/web/src/game/bootGame.ts`) menskala canvas sambil
+  menjaga rasio & pemetaan input; media queries di `styles.css` (tab menggulir, panel & kolom menumpuk).
+- **Service manager (Rust):** `apps/desktop/src-tauri/src/service.rs` — spawn Node, monitor port via TCP.
+  Override: `VC_SERVER_ENTRY`, `VC_REPO_ROOT`, `VC_NODE_BIN`, `VC_SERVER_PORT`.
+
+### Prasyarat (sekali per mesin — dijalankan owner)
+Tauri butuh **Rust** + native OS. Di mesin dev saat ini Rust **belum terpasang** (build dijalankan owner):
+- **Rust** stable via <https://rustup.rs> (→ `cargo`, `rustc`).
+- **Windows:** MS C++ Build Tools (`vs_BuildTools.exe`, komponen MSVC + SDK) + **WebView2 Runtime**
+  (sudah ada di Win 11; terdeteksi `tauri info`).
+- Node ≥ 20 + MySQL (XAMPP) + 9Router lokal — sama seperti fase lain.
+
+### Verifikasi cepat (tanpa Rust — yang sudah dipastikan)
+```bash
+npm run build              # backend → apps/server/dist/main.js (yang di-spawn shell)
+npm run typecheck:web      # web (termasuk desktop.ts, ServiceStatus, base URL)
+npm run lint               # eslint seluruh repo
+npm run build:web          # bundle web (browser, URL relatif)
+npm run build:web:desktop  # bundle web mode desktop (VITE_API_BASE_URL ter-embed)
+npm test                   # 104/104 (butuh MySQL hidup) — nol regresi
+npm run tauri -- info      # validasi config Tauri + cek toolchain (lapor Rust/MSVC kurang)
+```
+
+### DoD Fase 6 — uji manual (butuh Rust + MSVC terpasang)
+```bash
+# 1) sekali: turunkan ikon platform dari sumber:
+npm --prefix apps/desktop run tauri icon apps/desktop/src-tauri/icons/icon.png
+# 2) dev (jendela + spawn orchestrator):
+npm run build && npm run dev:desktop
+# 3) build installer:
+npm run build:desktop      # → apps/desktop/src-tauri/target/release/bundle/
+```
+1. Pastikan MySQL (XAMPP) & 9Router hidup. `npm run build` (server dist tersedia).
+2. `npm run dev:desktop` → jendela desktop terbuka, web tampil.
+3. **Lolos bila:** indikator topbar **Server hijau** (orchestrator di-spawn shell), 9Router/DB hijau bila
+   hidup; buat company → tambah dept (template) → karakter muncul & beranimasi → kirim arahan → konten AI
+   nyata (sama seperti Phase 2–5, kini di dalam app). Tutup jendela → proses Node anak ikut berhenti.
+4. **Browser (6.2):** `npm run dev:web` + `npm run dev:server` → buka `http://localhost:5173`, perkecil
+   jendela → tab menggulir, layout menumpuk, canvas menskala; klik-untuk-berjalan tetap akurat.
+
+> **Status (2026-06-13):** scaffold 6.1 + responsif 6.2 selesai; verifikasi non-Rust LOLOS (lihat di atas).
+> Build app final + DoD runtime "dobel-klik" menunggu owner memasang Rust + MSVC.
+
+---
+
 ## Menjalankan Codex (review & bug hunt)
 
 > Codex = **Reviewer & Bug Hunter** (lihat `AGENTS.md`). Ia membaca `AGENTS.md` otomatis;

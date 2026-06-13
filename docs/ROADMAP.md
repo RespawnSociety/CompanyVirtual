@@ -29,7 +29,7 @@
 | **3** | Departemen Lengkap + Workflow Engine | ✅ selesai (3.1–3.6; Codex sweep ✓, BUG-112/113 `VERIFIED_FIXED`) | Pipeline Marketing + Approval Gate |
 | **4** | Aksi Eksternal + Keamanan | ✅ selesai (4.1–4.5; Codex VERIFIED — BUG-107/108/114/115 `VERIFIED_FIXED`, CR-101 `VERIFIED`; test 89/89) | Publish (Playwright/dry-run) + Vault + audit + guardrails + auth boundary |
 | **5** | Platform Generalization | ✅ selesai (5.1–5.6; Codex review p5 ✓ — BUG-116/117/118 `VERIFIED_FIXED`, CR-110/111 `VERIFIED`, nol bug aktif; test 104/104) | Sales template + KPI dashboard + multi-floor + custom dept + throttle/cooldown |
-| **6** | App Packaging | ⬜ belum | Tauri desktop + web |
+| **6** | App Packaging | 🟡 6.1–6.2 ✓ (scaffold Tauri + web responsif; **verifikasi non-Rust lolos** — typecheck/lint/build web + test 104/104, CLI Tauri & config tervalidasi via `tauri info`). Build app final & DoD "dobel-klik" butuh owner pasang **Rust + MSVC** (WebView2 sudah ada). 6.4 review independen tertunda | Tauri desktop shell + web responsif |
 | **7** | Memory Graph per Agent | ⬜ belum | Visualisasi graph memory (ala graphify.net) per karakter |
 
 Legenda: ⬜ belum · 🟡 jalan · ✅ selesai (DoD lolos + Codex verified)
@@ -156,10 +156,36 @@ Legenda: ⬜ belum · 🟡 jalan · ✅ selesai (DoD lolos + Codex verified)
 
 **Tujuan:** distribusi sebagai app yang tinggal klik.
 
-- [ ] **6.1 Tauri shell** — `apps/desktop`: bungkus web + jalankan/pantau 9Router & agent lokal.
-- [ ] **6.2 Web responsif** — tetap jalan di browser.
-- [ ] **6.3 (Opsional) mobile companion.**
-- [ ] **6.4 Codex review final** — sweep keamanan & kebersihan menyeluruh.
+- [x] **6.1 Tauri shell** — `apps/desktop` (Tauri v2). Shell: (1) **memuat web** (dev: Vite `:5173`;
+  rilis: aset `apps/web/dist`), (2) **menjalankan** orchestrator lokal (spawn `node apps/server/dist/main.js`
+  sebagai proses anak, stop saat jendela ditutup — `src-tauri/src/service.rs`), (3) **memantau**
+  orchestrator (`:8787`), 9Router (`:20128`), MySQL (`:3306`) via TCP-connect → command `service_status`/
+  `restart_server`, indikator status di topbar web (widget `ServiceStatus`, hanya tampil di shell).
+  Integrasi web: base URL **absolut** lewat build mode `desktop` (`apps/web/.env.desktop` → `VITE_API_BASE_URL`,
+  dipakai `api.ts`/`socket.ts`) karena webview rilis di-host dari custom protocol. CSP membatasi `connect-src`
+  ke loopback `:8787`/`:20128`.
+- [x] **6.2 Web responsif** — Phaser mode **FIT** (canvas menskala ke kontainer, input tetap ter-map) +
+  media queries (topbar/tab membungkus/menggulir, kolom world & panel menumpuk di layar sempit). Tetap
+  jalan di **browser** (deteksi Tauri = no-op di browser; URL relatif via proxy Vite seperti sebelumnya).
+- [ ] **6.3 (Opsional) mobile companion.** — belum (Cargo `crate-type` sudah disiapkan untuk target mobile).
+- [~] **6.4 Codex review final** — sweep keamanan & kebersihan menyeluruh. **Self-review Claude** dilakukan;
+  Codex CLI tak terpasang → **verifikasi independen Codex tertunda** (lihat catatan di bawah).
+
+**Verifikasi yang LOLOS (tanpa Rust):** `npm run build` ✅ · `npm run typecheck:web` ✅ · `npm run lint` ✅ ·
+`npm run build:web` ✅ · `npm run build:web:desktop` ✅ (base URL `127.0.0.1:8787` **ter-embed** di bundle) ·
+`npm test` ✅ **104/104** (nol regresi) · CLI Tauri `2.11.2` ter-wiring, `tauri info` membaca config
+(frontendDist/devUrl/CSP/`tauri 2`) tanpa error; **WebView2 terdeteksi**.
+
+**BELUM bisa diverifikasi di mesin ini (butuh owner):** Rust + Cargo + **MSVC Build Tools** belum terpasang →
+`cargo build` shell, `tauri dev`, `tauri build`, dan **DoD runtime "dobel-klik → service hidup"** dijalankan
+owner. Langkah: pasang Rust (<https://rustup.rs>) + MSVC (`vs_BuildTools.exe`), lalu
+`npm --prefix apps/desktop run tauri icon apps/desktop/src-tauri/icons/icon.png` → `npm run build` →
+`npm run dev:desktop` (atau `npm run build:desktop`). Detail di `apps/desktop/README.md` & `docs/RUNBOOK.md`.
+
+**Catatan distribusi (follow-up):** build rilis kini mengasumsikan Node di PATH + repo lokal (resolusi di
+`service.rs`). Distribusi ke mesin tanpa repo butuh bundle `apps/server/dist` + `node_modules` sebagai Tauri
+resource (atau kemas server jadi binari) + arahkan `VC_SERVER_ENTRY`/resource `server/main.js`. Sengaja
+ditunda agar bundle tak membengkak.
 
 **DoD Fase 6:** dobel-klik app → service lokal hidup → platform jalan; juga jalan di browser.
 

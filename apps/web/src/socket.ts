@@ -10,7 +10,7 @@ import type {
   ServerToClientEvents,
   WorldSnapshot,
 } from "@vc/shared";
-import { AUTH_TOKEN } from "./api.js";
+import { AUTH_TOKEN, SERVER_URL } from "./api.js";
 
 type WorldSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -30,12 +30,15 @@ export function subscribeWorld(
     onConnectChange?: (connected: boolean) => void;
   },
 ): WorldSubscription {
-  // Same-origin (di-proxy Vite ke server). socket.io default path /socket.io.
+  // Same-origin (di-proxy Vite ke server) di dev/browser → `io(opts)`. Di shell Tauri (Phase 6)
+  // SERVER_URL absolut → `io(url, opts)` agar socket menjangkau orchestrator lokal :8787
+  // (webview di-host dari custom protocol, bukan same-origin). socket.io default path /socket.io.
   // BUG-108/CR-101: kirim token via handshake auth bila server dilindungi (sama dgn REST bearer).
-  const socket: WorldSocket = io({
+  const opts = {
     autoConnect: true,
     ...(AUTH_TOKEN ? { auth: { token: AUTH_TOKEN } } : {}),
-  });
+  };
+  const socket: WorldSocket = SERVER_URL ? io(SERVER_URL, opts) : io(opts);
 
   socket.on("connect", () => {
     handlers.onConnectChange?.(true);
