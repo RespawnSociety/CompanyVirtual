@@ -25,8 +25,8 @@
 |---|---|---|---|
 | **0** | Foundations & Spikes | ✅ selesai (0.1–0.6 lolos; Codex verified) | 9Router + 1 agent loop + WA auto-reply |
 | **1** | Platform Shell + Company Setup | ✅ Codex-reviewed (1.1–1.9); sisa BUG-107/108 + CR-101 (auth) = keputusan owner | Kantor 2D + Company/Dept/Character editor |
-| **2** | Runtime + 1 Agent Nyata | 🟡 implementasi selesai (2.1–2.5 ✓ build/lint/test/smoke) — menunggu Codex 2.6 | Directive → agent kerja → Artifact |
-| **3** | Departemen Lengkap + Workflow Engine | 🟡 implementasi selesai (3.1–3.5 ✓ build/lint/test + smoke LIVE 9Router) — menunggu Codex 3.6 | Pipeline Marketing + Approval Gate |
+| **2** | Runtime + 1 Agent Nyata | ✅ selesai (2.1–2.6; Codex sweep Phase 0–3 ✓, nol bug high+) | Directive → agent kerja → Artifact |
+| **3** | Departemen Lengkap + Workflow Engine | ✅ selesai (3.1–3.6; Codex sweep ✓, BUG-112/113 `VERIFIED_FIXED`) | Pipeline Marketing + Approval Gate |
 | **4** | Aksi Eksternal + Keamanan | ✅ selesai (4.1–4.5; Codex VERIFIED — BUG-107/108/114/115 `VERIFIED_FIXED`, CR-101 `VERIFIED`; test 89/89) | Publish (Playwright/dry-run) + Vault + audit + guardrails + auth boundary |
 | **5** | Platform Generalization | ⬜ belum | ≥2 departemen berjalan stabil |
 | **6** | App Packaging | ⬜ belum | Tauri desktop + web |
@@ -90,7 +90,7 @@ Legenda: ⬜ belum · 🟡 jalan · ✅ selesai (DoD lolos + Codex verified)
 - [x] **2.3 Directive → Task → Agent** — `POST /api/agents/:agentId/directives` → buat `Directive`+`Task` → dispatch (latar belakang) → loop → hasil final jadi `Artifact`, status Task/Directive diperbarui. Endpoint balas 202.
 - [x] **2.4 Animasi status** — `agent:event` (socket.io) → `OfficeScene.setAgentStatus` (titik status + denyut saat working) + composer arahan di tab Kantor + Task Board live (refetch saat event).
 - [x] **2.5 Memory nyata** — `MysqlMemoryStore` persisten (tabel `memory_items`), retrieval recency+relevance (keyword) sama dengan InMemory; di-inject ke dispatcher.
-- [ ] **2.6 Codex review Phase 2** — fokus: semua LLM lewat router (tak ada provider langsung), tidak ada panggilan LLM per-tick animasi. **(menunggu — digabung sweep Codex 0–2)**
+- [x] **2.6 Codex review Phase 2** — ✅ **direview Codex** (sweep Phase 0–3, 2026-06-13): semua LLM lewat router (tak ada provider langsung) & tak ada panggilan LLM per-tick animasi terkonfirmasi; migrasi MySQL/async dicek. Nol bug high+ tersisa (BUG-112/113 dari sweep → `VERIFIED_FIXED`).
 
 **DoD Fase 2:** ketik arahan → karakter "bekerja" → konten asli AI (via 9Router) tersimpan & tampil di Task Board.
 
@@ -107,7 +107,7 @@ Legenda: ⬜ belum · 🟡 jalan · ✅ selesai (DoD lolos + Codex verified)
 - [x] **3.3 Generic Workflow Engine** — `apps/server/src/workflow/engine.ts`: baca `WorkflowDef` (DATA), eksekusi step urut, token `loop_until_pass` (loop revisi ke step konten, cap `maxReviewRounds`) & `approval_gate` (pause + persist `WorkflowRun`). **Tanpa cabang "marketing".**
 - [x] **3.4 Delegasi internal** — engine mengoordinasi role→role (output mengalir antar-step via `stepArtifacts`/konteks); Manager step `request_approval` = "wajah" yang mengirim pesan minta approval ke owner.
 - [x] **3.5 Approval Gate + resume** — pause di `approval_gate` (run `awaiting_approval`), resume `APPROVE`/`REVISI` lewat `POST /api/approvals/:approvalId` (UI WorkflowPanel) + event `approval_requested`/`message` ke owner. *(Inbound WA `APPROVE`/`REVISI` 2-arah penuh = lanjutan Phase 4 saat Cloud API hidup; jalur keputusan lewat UI sudah lengkap.)*
-- [ ] **3.6 Codex review Phase 3** — fokus: engine benar-benar data-driven, approval gate tak bisa di-bypass, threading benar. **(menunggu)**
+- [x] **3.6 Codex review Phase 3** — ✅ **direview Codex** (sweep Phase 0–3, 2026-06-13): engine data-driven (tanpa hardcode "marketing"), approval gate tak bisa di-bypass, threading/`stepArtifacts` benar. Temuan BUG-112/113 → di-fix Claude → `VERIFIED_FIXED`. Nol bug high+ tersisa.
 
 **DoD Fase 3:** 1 directive mengalir lewat seluruh departemen → konten direview & dicek pasar → Manager minta approval → keputusanmu menggerakkan langkah berikut.
 
