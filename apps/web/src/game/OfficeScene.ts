@@ -14,7 +14,7 @@
 
 import Phaser from "phaser";
 import EasyStar from "easystarjs";
-import type { AgentProfile, AgentStatus, WorldSnapshot } from "@vc/shared";
+import type { AgentProfile, AgentStatus, Floor, WorldSnapshot } from "@vc/shared";
 import { TILE, TILE_COLORS, colorForSprite } from "./sprites.js";
 import { DEFAULT_MAP_KEY, isKnownMapKey, mapPathFor } from "./maps.js";
 
@@ -23,17 +23,24 @@ const CHAR_TEX = "char-iso"; // pawn karakter
 const DESK_TEX = "desk-iso"; // meja + monitor (iso)
 const CHAIR_TEX = "chair-iso"; // kursi (iso)
 const FLOOR_TEX = "floor-iso"; // ubin lantai diamond
+// Dekorasi ruang (Phase 6) agar kantor tak sepi.
+const PLANT_TEX = "plant-iso";
+const VENDING_TEX = "vending-iso";
+const COOLER_TEX = "cooler-iso";
+const ELEVATOR_TEX = "elevator-iso";
 
 // Dimensi ubin isometrik (diamond 2:1).
 const ISO_W = 64;
 const ISO_H = 32;
 const WALL_H = 64; // tinggi dinding belakang
-// Sub-lapisan depth pada satu petak (chair < character < desk → orang tampak duduk di meja).
+// Sub-lapisan depth pada satu petak. Karakter PALING DEPAN agar tak tertutup meja.
 const D_FLOOR = -100000;
 const D_WALL = -90000;
-const SUB_CHAIR = 2;
-const SUB_CHAR = 4;
-const SUB_DESK = 6;
+const SUB_CHAIR = 1;
+const SUB_DESK = 3;
+const SUB_CHAR = 6;
+// Geser karakter sedikit ke depan (bawah layar) → berdiri di depan meja & jelas terlihat.
+const CHAR_FRONT_OFFSET = 16;
 
 interface CharObj {
   container: Phaser.GameObjects.Container;
@@ -50,6 +57,8 @@ interface CharObj {
   chair: Phaser.GameObjects.Image;
   deskTile: { x: number; y: number };
   active?: Phaser.Tweens.TweenChain;
+  /** Sedang berkeliling ambient (bukan diarahkan user/directive). */
+  roaming?: boolean;
 }
 
 const STATUS_COLORS: Record<AgentStatus, number> = {
@@ -75,9 +84,14 @@ export class OfficeScene extends Phaser.Scene {
   private chars = new Map<string, CharObj>();
   private selectedId: string | null = null;
 
-  // Objek lantai + dinding (digambar ulang tiap ganti lantai).
+  // Objek lantai + dinding + dekorasi (digambar ulang tiap ganti lantai).
   private floorTiles: Phaser.GameObjects.Image[] = [];
+  private props: Phaser.GameObjects.Image[] = [];
   private roomGfx: Phaser.GameObjects.Graphics | null = null;
+  // Lift (bisa diklik untuk pindah lantai) + daftar lantai/aktif untuk siklus.
+  private elevator: Phaser.GameObjects.Image | null = null;
+  private floorsList: Floor[] = [];
+  private currentFloorId: string | null = null;
 
   private clockText!: Phaser.GameObjects.Text;
   private minutes = 9 * 60;
@@ -119,6 +133,9 @@ export class OfficeScene extends Phaser.Scene {
       this.handleClick(p.worldX, p.worldY);
     });
 
+    // Ambient: agent idle berkeliling acak & sesekali "ngobrol" (gelembung) agar kantor hidup.
+    this.time.addEvent({ delay: 2600, loop: true, callback: () => this.ambientTick() });
+
     this.ready = true;
     if (this.pending) {
       this.applyWorld(this.pending.snapshot, this.pending.floorId);
@@ -142,6 +159,8 @@ export class OfficeScene extends Phaser.Scene {
       return;
     }
     const targetFloor = floorId ?? snapshot.floors[0]?.id;
+    this.floorsList = snapshot.floors;
+    this.currentFloorId = targetFloor ?? null;
     this.ensureMapForFloor(snapshot.floors.find((f) => f.id === targetFloor)?.mapKey);
     const deptOnFloor = new Set(
       snapshot.departments.filter((d) => d.floorId === targetFloor).map((d) => d.id),
@@ -278,6 +297,9 @@ export class OfficeScene extends Phaser.Scene {
   private renderRoom(): void {
     for (const t of this.floorTiles) t.destroy();
     this.floorTiles = [];
+    for (const p of this.props) p.destroy();
+    this.props = [];
+    this.elevator = null;
     this.roomGfx?.destroy();
 
     // Lantai (semua petak; karakter dibatasi ke petak dalam oleh clampTile + grid).
@@ -326,6 +348,29 @@ export class OfficeScene extends Phaser.Scene {
     this.drawWallDecor(g, A, left, [0.4, 0.66], 0xe0c45a); // bingkai (kuning)
 
     this.roomGfx = g;
+    this.placeProps();
+  }
+
+  /** Pasang dekorasi (lift, vending, dispenser, tanaman) di petak tepi agar ruang tak sepi. */
+  private placeProps(): void {
+    const W = this.gridW;
+    const H = this.gridH;
+    const add = (tex: string, tx: number, ty: number): Phaser.GameObjects.Image | null => {
+      if (tx < 0 || ty < 0 || tx >= W || ty >= H) return null;
+      const { wx, wy } = this.tileToIso(tx, ty);
+      const img = this.add.image(wx, wy, tex).setOrigin(0.5, 0.9).setDepth(this.depthFor(tx, ty) + 2);
+      this.props.push(img);
+      return img;
+    };
+    // Lift di sudut belakang (bisa diklik untuk pindah lantai).
+    this.elevator = add(ELEVATOR_TEX, 1, 1);
+    // Mesin minuman + dispenser dekat dinding belakang-kanan.
+    add(VENDING_TEX, W - 2, 1);
+    add(COOLER_TEX, W - 2, 3);
+    // Tanaman di sudut-sudut depan.
+    add(PLANT_TEX, 1, H - 2);
+    add(PLANT_TEX, W - 2, H - 2);
+    add(PLANT_TEX, 3, 1);
   }
 
   /** Gambar panel (jendela/bingkai) pada dinding A→end di posisi `fracs` sepanjang dinding. */
@@ -467,6 +512,102 @@ export class OfficeScene extends Phaser.Scene {
       g.generateTexture(CHAIR_TEX, 40, 44);
       g.destroy();
     }
+
+    // Tanaman pot (40×56).
+    if (!this.textures.exists(PLANT_TEX)) {
+      const g = this.add.graphics();
+      g.fillStyle(0x000000, 0.2);
+      g.fillEllipse(20, 52, 26, 8);
+      g.fillStyle(0x8a5a32, 1);
+      g.fillRect(10, 38, 20, 14);
+      g.fillStyle(0x6e4626, 1);
+      g.fillRect(10, 38, 20, 4);
+      g.fillStyle(0x2f9e54, 1);
+      g.fillCircle(20, 26, 14);
+      g.fillCircle(11, 31, 9);
+      g.fillCircle(29, 31, 9);
+      g.fillStyle(0x37b362, 1);
+      g.fillCircle(20, 16, 10);
+      g.generateTexture(PLANT_TEX, 40, 56);
+      g.destroy();
+    }
+
+    // Mesin minuman (vending) merah (48×78).
+    if (!this.textures.exists(VENDING_TEX)) {
+      const g = this.add.graphics();
+      g.fillStyle(0x000000, 0.22);
+      g.fillEllipse(24, 74, 40, 9);
+      g.fillStyle(0xc0392b, 1);
+      g.fillRoundedRect(6, 6, 36, 66, 4);
+      g.fillStyle(0x922b21, 1);
+      g.fillRect(6, 6, 36, 8);
+      g.fillStyle(0x12182a, 1);
+      g.fillRect(10, 18, 16, 38);
+      g.fillStyle(0x4aa3ff, 0.5);
+      g.fillRect(12, 20, 12, 34);
+      g.fillStyle(0xf2c14e, 1);
+      g.fillRect(30, 20, 8, 6);
+      g.fillRect(30, 30, 8, 6);
+      g.fillRect(30, 40, 8, 6);
+      g.fillStyle(0x2a3350, 1);
+      g.fillRect(10, 60, 28, 8);
+      g.generateTexture(VENDING_TEX, 48, 78);
+      g.destroy();
+    }
+
+    // Dispenser air (36×62).
+    if (!this.textures.exists(COOLER_TEX)) {
+      const g = this.add.graphics();
+      g.fillStyle(0x000000, 0.2);
+      g.fillEllipse(18, 58, 28, 8);
+      g.fillStyle(0xeef2f8, 1);
+      g.fillRoundedRect(6, 24, 24, 32, 3);
+      g.fillStyle(0x9fd0ff, 0.9);
+      g.fillRoundedRect(9, 4, 18, 22, 6);
+      g.fillStyle(0x4aa3ff, 0.8);
+      g.fillRect(11, 9, 14, 14);
+      g.fillStyle(0x2a3350, 1);
+      g.fillRect(12, 38, 12, 5);
+      g.generateTexture(COOLER_TEX, 36, 62);
+      g.destroy();
+    }
+
+    // Pintu lift (bersih, mirip referensi) — 64×96.
+    if (!this.textures.exists(ELEVATOR_TEX)) {
+      const g = this.add.graphics();
+      g.fillStyle(0x000000, 0.22);
+      g.fillEllipse(32, 92, 52, 10); // bayangan
+      // rangka luar
+      g.fillStyle(0x8b94a8, 1);
+      g.fillRoundedRect(4, 4, 56, 86, 4);
+      g.fillStyle(0x70788f, 1);
+      g.fillRect(4, 4, 56, 4);
+      // lintel + indikator lantai
+      g.fillStyle(0x2b3450, 1);
+      g.fillRect(8, 8, 48, 10);
+      g.fillStyle(0x12182a, 1);
+      g.fillRect(24, 10, 16, 6);
+      g.fillStyle(0x4ade80, 1);
+      g.fillRect(26, 12, 12, 2);
+      // dua daun pintu terang + highlight tepi + seam tengah
+      g.fillStyle(0xe7ecf5, 1);
+      g.fillRect(10, 20, 21, 66);
+      g.fillRect(33, 20, 21, 66);
+      g.fillStyle(0xf5f8fc, 1);
+      g.fillRect(10, 20, 21, 3);
+      g.fillRect(33, 20, 21, 3);
+      g.fillStyle(0xb6bed0, 1);
+      g.fillRect(31, 20, 2, 66);
+      // panel tombol di sisi kanan
+      g.fillStyle(0x2a3350, 1);
+      g.fillRoundedRect(54, 46, 6, 16, 2);
+      g.fillStyle(0x4ade80, 1);
+      g.fillCircle(57, 51, 1.8);
+      g.fillStyle(0xff5d6c, 1);
+      g.fillCircle(57, 57, 1.8);
+      g.generateTexture(ELEVATOR_TEX, 64, 96);
+      g.destroy();
+    }
   }
 
   private spawnChar(agent: AgentProfile): CharObj {
@@ -505,14 +646,15 @@ export class OfficeScene extends Phaser.Scene {
     const d = this.tileToIso(obj.deskTile.x, obj.deskTile.y);
     const base = this.depthFor(obj.deskTile.x, obj.deskTile.y);
     obj.desk.setPosition(d.wx, d.wy).setDepth(base + SUB_DESK);
-    obj.chair.setPosition(d.wx, d.wy + 4).setDepth(base + SUB_CHAIR);
+    // Kursi di belakang+atas meja → sandaran menyembul di atas meja (depth di bawah meja).
+    obj.chair.setPosition(d.wx, d.wy - 24).setDepth(base + SUB_CHAIR);
     this.placeChar(obj);
   }
 
-  /** Posisikan container karakter di petak `tile` saat ini + depth sesuai (x+y). */
+  /** Posisikan container karakter di petak `tile` saat ini (+offset depan) + depth sesuai (x+y). */
   private placeChar(obj: CharObj): void {
     const c = this.tileToIso(obj.tile.x, obj.tile.y);
-    obj.container.setPosition(c.wx, c.wy);
+    obj.container.setPosition(c.wx, c.wy + CHAR_FRONT_OFFSET);
     obj.container.setDepth(this.depthFor(obj.tile.x, obj.tile.y) + SUB_CHAR);
   }
 
@@ -540,15 +682,31 @@ export class OfficeScene extends Phaser.Scene {
   }
 
   private handleClick(worldX: number, worldY: number): void {
-    const { x: tx, y: ty } = this.isoToTile(worldX, worldY);
-    if (tx < 0 || ty < 0 || tx >= this.gridW || ty >= this.gridH) return;
-
+    // Pilih karakter via HIT-TEST sprite (akurat di iso walau pawn digeser ke depan) — utamakan
+    // yang paling depan bila bertumpuk.
+    let hitId: string | null = null;
+    let hitDepth = -Infinity;
     for (const [id, obj] of this.chars) {
-      if (obj.tile.x === tx && obj.tile.y === ty) {
-        this.select(id);
-        return;
+      if (obj.sprite.getBounds().contains(worldX, worldY)) {
+        const d = this.depthFor(obj.tile.x, obj.tile.y);
+        if (d > hitDepth) {
+          hitDepth = d;
+          hitId = id;
+        }
       }
     }
+    if (hitId) {
+      this.select(hitId);
+      return;
+    }
+    // Klik LIFT → pindah ke lantai berikutnya (bila kantor punya >1 lantai).
+    if (this.elevator && this.elevator.getBounds().contains(worldX, worldY)) {
+      this.requestNextFloor();
+      return;
+    }
+    // Selain itu → jalankan yang terpilih ke petak yang diklik (bila walkable).
+    const { x: tx, y: ty } = this.isoToTile(worldX, worldY);
+    if (tx < 0 || ty < 0 || tx >= this.gridW || ty >= this.gridH) return;
     if (this.selectedId && this.grid[ty]?.[tx] === 0) {
       this.walkTo(this.selectedId, tx, ty);
     }
@@ -564,25 +722,120 @@ export class OfficeScene extends Phaser.Scene {
 
   private walkTo(id: string, tx: number, ty: number): void {
     const obj = this.chars.get(id);
-    if (!obj) return;
+    if (obj) {
+      obj.roaming = false; // arahan user membatalkan roam ambient.
+      this.pathWalk(obj, tx, ty);
+    }
+  }
+
+  /** Cari jalur (easystar) lalu animasikan container karakter petak-demi-petak (iso). */
+  private pathWalk(obj: CharObj, tx: number, ty: number, onArrive?: () => void): void {
     this.easystar.findPath(obj.tile.x, obj.tile.y, tx, ty, (path) => {
-      if (!path || path.length < 2) return;
+      if (!path || path.length < 2) {
+        onArrive?.();
+        return;
+      }
       obj.active?.stop();
       const steps = path.slice(1).map((node) => {
         const { wx, wy } = this.tileToIso(node.x, node.y);
         return {
           x: wx,
-          y: wy,
-          duration: 170,
+          y: wy + CHAR_FRONT_OFFSET,
+          duration: 200,
           onComplete: () => {
             obj.tile = { x: node.x, y: node.y };
             obj.container.setDepth(this.depthFor(node.x, node.y) + SUB_CHAR);
           },
         };
       });
-      obj.active = this.tweens.chain({ targets: obj.container, tweens: steps });
+      obj.active = this.tweens.chain({
+        targets: obj.container,
+        tweens: steps,
+        onComplete: () => onArrive?.(),
+      });
     });
     this.easystar.calculate();
+  }
+
+  // ---------------- ambient (roam + obrolan) ----------------
+
+  private readonly bubbleEmojis = ["💬", "👋", "☕", "📊", "✅", "🤔", "📝", "💡"];
+
+  private ambientTick(): void {
+    const idle = [...this.chars.values()].filter(
+      (o) => o.status === "idle" && !o.roaming && !o.active?.isPlaying(),
+    );
+    if (idle.length === 0) return;
+    const a = idle[Math.floor(Math.random() * idle.length)]!;
+
+    let target: { x: number; y: number } | null = null;
+    // 50%: hampiri agent lain (kesan saling berkomunikasi) + gelembung di keduanya.
+    if (Math.random() < 0.5 && this.chars.size > 1) {
+      const others = [...this.chars.values()].filter((o) => o !== a);
+      const b = others[Math.floor(Math.random() * others.length)]!;
+      target = this.randomWalkableNear(b.tile.x, b.tile.y, 1);
+      if (target) this.showBubble(b);
+    }
+    // else / gagal: berkeliling acak di sekitar posisi sekarang.
+    if (!target) target = this.randomWalkableNear(a.tile.x, a.tile.y, 4);
+    if (!target) return;
+    this.showBubble(a);
+    a.roaming = true;
+    this.pathWalk(a, target.x, target.y, () => {
+      a.roaming = false;
+    });
+  }
+
+  /** Petak walkable acak (grid==0) dalam radius dari (tx,ty); null bila tak ketemu. */
+  private randomWalkableNear(tx: number, ty: number, radius: number): { x: number; y: number } | null {
+    for (let i = 0; i < 16; i++) {
+      const nx = tx + Math.round((Math.random() * 2 - 1) * radius);
+      const ny = ty + Math.round((Math.random() * 2 - 1) * radius);
+      if (
+        nx >= 0 &&
+        ny >= 0 &&
+        nx < this.gridW &&
+        ny < this.gridH &&
+        this.grid[ny]?.[nx] === 0 &&
+        !(nx === tx && ny === ty)
+      ) {
+        return { x: nx, y: ny };
+      }
+    }
+    return null;
+  }
+
+  /** Gelembung emoji singkat di atas karakter (kesan ngobrol). */
+  private showBubble(obj: CharObj): void {
+    const e = this.bubbleEmojis[Math.floor(Math.random() * this.bubbleEmojis.length)]!;
+    this.showBubbleAt(obj.container.x, obj.container.y - 50, e);
+  }
+
+  private showBubbleAt(x: number, y: number, emoji: string): void {
+    const txt = this.add.text(x, y, emoji, { fontSize: "18px" }).setOrigin(0.5, 1).setDepth(2_000_000);
+    this.tweens.add({
+      targets: txt,
+      y: y - 14,
+      alpha: { from: 1, to: 0 },
+      duration: 1500,
+      ease: "Sine.Out",
+      onComplete: () => txt.destroy(),
+    });
+  }
+
+  /**
+   * Klik lift → minta React (WorldView) pindah ke lantai berikutnya (siklus). Hanya bila ada
+   * >1 lantai; selain itu beri isyarat. Scene tak menyimpan pilihan lantai (itu state React) →
+   * komunikasi lewat event game `office:request-floor` (didengar WorldView).
+   */
+  private requestNextFloor(): void {
+    if (this.floorsList.length < 2) {
+      if (this.elevator) this.showBubbleAt(this.elevator.x, this.elevator.y - 70, "🔼");
+      return;
+    }
+    const idx = this.floorsList.findIndex((f) => f.id === this.currentFloorId);
+    const next = this.floorsList[(idx + 1) % this.floorsList.length];
+    if (next) this.game.events.emit("office:request-floor", next.id);
   }
 
   private clampTile(x: number, y: number): { x: number; y: number } {

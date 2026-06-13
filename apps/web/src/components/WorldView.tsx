@@ -42,7 +42,11 @@ export function WorldView({
       }
     };
     handle.game.events.once("ready", applyCurrent);
+    // Phase 6: klik LIFT di scene → minta pindah lantai (siklus). Scene emit id lantai berikutnya.
+    const onRequestFloor = (fid: string): void => setFloorId(fid);
+    handle.game.events.on("office:request-floor", onRequestFloor);
     return () => {
+      handle.game.events.off("office:request-floor", onRequestFloor);
       handle.destroy();
       handleRef.current = null;
     };
