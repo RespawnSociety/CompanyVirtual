@@ -136,3 +136,49 @@ Untuk tiap entri `BUGLIST` ber-status `FIXED`, baca kode terbaru di lokasinya:
 
 **Observasi:** `npm test` **104 passed** (`tests/{sales,throttle,kpi,loop}.test.ts` dll), build/lint/typecheck:web/build:web hijau.
 Catatan infra: tiap FILE test kini pakai database sendiri (`virtual_company_test_<file>`) — bukan bug, perbaikan flakiness.
+
+---
+
+## Fokus review Phase 6 (app packaging) — untuk 6.4 (`npm run review:codex:p6`)
+
+> **Konteks penting:** Rust/Cargo + MSVC **belum terpasang** di mesin ini → kamu **tidak bisa**
+> menjalankan `cargo build`, `tauri dev`, atau `tauri build`. Review kode Rust = **analisis baca-kode
+> (read-only)**; tandai temuan yang baru bisa dikonfirmasi setelah build sebagai catatan untuk owner.
+> Tak ada entri BUGLIST Phase 6 berstatus `FIXED` saat ini (belum ada siklus fix) — fokus = bug hunt baru.
+
+> **Cakupan:** `apps/desktop/src-tauri/src/{lib,service,main}.rs`, `apps/desktop/src-tauri/{tauri.conf.json,Cargo.toml,build.rs,capabilities/default.json}`,
+> `apps/desktop/package.json`, `apps/desktop/README.md`, `apps/web/src/{api,socket,desktop}.ts`,
+> `apps/web/src/components/ServiceStatus.tsx`, `apps/web/src/App.tsx`, `apps/web/src/game/bootGame.ts`,
+> `apps/web/src/styles.css`, `apps/web/src/vite-env.d.ts`, `apps/web/.env.desktop`, root `package.json`
+> (scripts `dev:desktop`/`build:desktop`/`build:web:desktop`), `.gitignore`, `.env.example`.
+
+**Fokus verifikasi 2x:**
+1. **Rust shell (`service.rs`/`lib.rs`, baca-kode):** spawn `node <entry>` aman — path entry berasal dari
+   env/resource/penelusuran filesystem (**bukan input user**) → flag bila ada jalur injeksi command/arg.
+   Proses anak orchestrator **di-kill** saat window `Destroyed` **dan** lewat `Drop` → cek potensi
+   **orphan** bila app crash. **TOCTOU** `port_open` sebelum spawn (dua instance → spawn dobel?).
+   Resolusi `resource_dir()`/`entry.ancestors().nth(4)` benar (root repo). Tak ada `panic`/`unwrap`
+   di jalur normal selain `lock().expect` (boleh). `cwd` server = root repo (temukan `.env`/`data/`/node_modules).
+2. **Keamanan packaging (AGENTS.md §8):** CSP `connect-src` **least-privilege** (hanya loopback
+   `:8787`/`:20128`, TANPA wildcard `*`); `script-src 'self'` (tak ada remote script). `withGlobalTauri:true`
+   hanya mengekspos command `service_status`/`restart_server` ke **bundle lokal tepercaya** (`frontendDist`)
+   — bukan konten remote. `restart_server` tak bisa disalahgunakan. **Desktop TIDAK mem-bypass auth**:
+   web tetap kirim `VITE_API_AUTH_TOKEN` (= `API_AUTH_TOKEN`). `.env.desktop` **bukan secret** (hanya
+   alamat loopback) & benar di-commit (pengecualian `.gitignore`); env yang di-inherit proses node tak di-log.
+3. **NOL REGRESI browser (KRITIS):** saat `VITE_API_BASE_URL` kosong (default browser/dev), `api.ts`
+   `BASE` = `"/api"` & `socket.ts` `io(opts)` **persis** perilaku lama (URL relatif, proxy Vite) →
+   buktikan tak ada perubahan jalur same-origin. `SERVER_URL` strip trailing-slash benar. Auth header
+   tetap terkirim di kedua jalur.
+4. **Deteksi Tauri no-op aman di browser:** `desktop.ts` tak crash bila `window.__TAURI__` absen
+   (return null/false); `ServiceStatus` render `null` di browser (tak polling/tak error tiap interval).
+5. **Responsif (6.2):** Phaser mode **FIT** (`bootGame.ts`) tak merusak pemetaan koordinat
+   klik-untuk-berjalan (Scale Manager memetakan pointer ke resolusi dasar) — **verifikasi di browser**;
+   media queries `styles.css` tak menyembunyikan kontrol penting di layar sempit.
+6. **Build mode desktop:** `build:web:desktop` (`--mode desktop`) memuat `apps/web/.env.desktop` →
+   base URL absolut **ter-embed**; tak bocor ke `build:web` (browser) biasa.
+7. **Nol regresi fungsional:** runtime/engine/skills tak tersentuh (perubahan hanya web-shell + scaffold).
+
+**Observasi (bukti verifikasi #2):** `npm run build` + `typecheck:web` + `lint` + `build:web` +
+`build:web:desktop` (cek `127.0.0.1:8787` ter-embed di `apps/web/dist`) + `npm test` (**104**, butuh MySQL hidup)
++ `npm run tauri -- info` (validasi config + lapor toolchain: Rust/MSVC kurang, WebView2 ada).
+Smoke browser & desktop: lihat `docs/RUNBOOK.md` (Phase 6).

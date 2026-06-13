@@ -396,6 +396,8 @@ codex --version                  # pastikan terpasang
 npm run review:codex      # review diff fase berjalan (bug hunt + kualitas + verifikasi FIXED)
 npm run review:codex:all  # SWEEP MENYELURUH Phase 0–3 (seluruh kode, fokus migrasi MySQL + runtime + workflow)
 npm run review:codex:p4   # REVIEW Phase 4 (keamanan): vault/guardrails/auth/audit/skill sosial + verifikasi BUG-107/108 & CR-101
+npm run review:codex:p5   # REVIEW Phase 5 (generalisasi): sales/KPI/multi-floor/throttle + verifikasi BUG-116/117/118 & CR-110
+npm run review:codex:p6   # REVIEW Phase 6 (packaging): shell Tauri + web responsif (Rust = baca-kode; nol-regresi browser)
 npm run verify:codex      # khusus: verifikasi ulang entri BUGLIST berstatus FIXED
 ```
 
