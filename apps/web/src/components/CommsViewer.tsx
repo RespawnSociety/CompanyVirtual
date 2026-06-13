@@ -1,18 +1,13 @@
 /**
- * CommsViewer (roadmap 1.7) — penampil percakapan owner↔agent. Sejak Phase 6 terisi nyata:
- * pesan agent (permintaan approval, jawaban, notifikasi) tersimpan & tampil di sini per company,
- * walau WhatsApp mock/tak terkonfigurasi. Saat masih kosong → tampilkan contoh placeholder.
+ * CommsViewer (roadmap 1.7) — penampil percakapan owner↔agent. Sejak Phase 6 terisi NYATA:
+ * setiap agent "bicara" di sini — output tiap langkah workflow, permintaan approval, jawaban
+ * single-agent, & notifikasi — tersimpan & tampil per company, walau WhatsApp mock/tak
+ * terkonfigurasi. Saat masih kosong → tampilkan empty state (bukan contoh palsu).
  */
 
 import { useEffect, useState } from "react";
 import type { CommsMessage } from "@vc/shared";
 import { api } from "../api.js";
-
-const PLACEHOLDER: CommsMessage[] = [
-  { id: "c1", threadId: "t1", from: "user", to: "Manager", channel: "whatsapp", text: "(contoh) Tolong siapkan konten peluncuran minggu ini.", at: 1 },
-  { id: "c2", threadId: "t1", from: "Manager", to: "user", channel: "whatsapp", text: "(contoh) Siap, saya koordinasikan tim. Akan saya kabari hasilnya.", at: 2 },
-  { id: "c3", threadId: "t1", from: "Manager", to: "user", channel: "whatsapp", text: "(contoh) Draft caption siap & sudah direview. Mohon approval untuk publish.", at: 3 },
-];
 
 export function CommsViewer({
   companyId,
@@ -59,38 +54,38 @@ export function CommsViewer({
     );
   }
 
-  const isPlaceholder = loaded && msgs.length === 0;
-  const data = isPlaceholder ? PLACEHOLDER : msgs;
-
   return (
     <div className="panel">
-      <h2>
-        Comms Viewer{" "}
-        {isPlaceholder && (
-          <span className="badge placeholder">contoh placeholder — terisi mulai Phase 3</span>
-        )}
-      </h2>
-      <div className="list">
-        {data.map((m) => {
-          const fromUser = m.from === "user";
-          return (
-            <div
-              className="card"
-              key={m.id}
-              style={{
-                alignSelf: fromUser ? "flex-start" : "flex-end",
-                maxWidth: "75%",
-                borderColor: fromUser ? "var(--border)" : "var(--accent)",
-              }}
-            >
-              <div className="sub">
-                {String(m.from)} → {String(m.to)} · {m.channel}
+      <h2>Comms Viewer</h2>
+      {loaded && msgs.length === 0 ? (
+        <p className="empty">
+          Belum ada percakapan. Beri arahan ke karakter (tab Kantor) atau jalankan workflow (tab
+          Workflow) — pesan tiap agent akan muncul di sini.
+        </p>
+      ) : (
+        <div className="list">
+          {msgs.map((m) => {
+            const fromUser = m.from === "user";
+            return (
+              <div
+                className="card"
+                key={m.id}
+                style={{
+                  alignSelf: fromUser ? "flex-start" : "flex-end",
+                  maxWidth: "75%",
+                  borderColor: fromUser ? "var(--border)" : "var(--accent)",
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                <div className="sub">
+                  {String(m.from)} → {String(m.to)} · {m.channel}
+                </div>
+                <div>{m.text}</div>
               </div>
-              <div>{m.text}</div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

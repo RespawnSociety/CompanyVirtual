@@ -270,12 +270,13 @@ export class WorkflowEngine {
       i += 1; // tanpa next → maju; bila habis, loop berhenti → selesai
     }
 
-    // Selesai: beri tahu owner + ringkasan hasil akhir (juga tampil di tab Comms).
+    // Selesai: tutup percakapan dengan notifikasi dari "wajah" perusahaan (tab Comms). Output
+    // tiap langkah sudah diposting masing-masing agent di atas, jadi di sini cukup ringkas.
     if (lastOutput) {
       await this.messageOwner(
         dept,
         run.directiveId,
-        `✅ Selesai memproses arahan. Hasil akhir:\n${truncate(lastOutput, 600)}`,
+        `✅ Selesai memproses arahan. Hasil akhir tersedia di Task Board.`,
         (this.deps.now ?? Date.now)(),
       );
     }
@@ -372,7 +373,24 @@ export class WorkflowEngine {
       (await store.updateTask(task.id, { status: taskStatus, outputRef: artifact.id })) ?? task;
     const nextArtifacts = { ...run.stepArtifacts, [step.id]: artifact.id };
     const updatedRun = (await store.updateWorkflowRun(run.id, { stepArtifacts: nextArtifacts })) ?? run;
-    // BUG-110: event POST-persist.
+    // Phase 6: tiap agent "bicara" di Comms — output step ini tampil sebagai pesan (channel
+    // internal) dari agent ybs, jadi seluruh tim terlihat berkomunikasi di tab Comms.
+    if (finalText.trim()) {
+      await store
+        .addCommsMessage(
+          {
+            companyId: dept.companyId,
+            threadId: run.directiveId,
+            from: agent.name,
+            to: "user",
+            channel: "internal",
+            text: truncate(finalText, 800),
+          },
+          now(),
+        )
+        .catch((e) => console.error("[comms] addCommsMessage:", e));
+    }
+    // BUG-110: event POST-persist (juga memicu refresh tab Comms di UI).
     emit({ type: "task_update", agentId: agent.id, at: now(), taskId: doneTask.id, status: taskStatus });
     return { finalText, run: updatedRun, status };
   }
