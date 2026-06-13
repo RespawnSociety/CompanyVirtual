@@ -18,10 +18,39 @@ Workflow data-driven (bukan hardcode)? Semua LLM lewat 9Router? Biaya/performa w
 ## Ringkasan Aktif
 | ID | Judul | Type | Severity | Status | Location |
 |---|---|---|---|---|---|
-| - | Tidak ada temuan aktif | - | - | - | - |
+| CR-111 | `recordLoopUsage` diklaim fire-and-forget tetapi caller tetap menunggu insert KPI | performance / consistency | low | OPEN | `apps/server/src/registry/dispatcher.ts:155`, `apps/server/src/workflow/engine.ts:314` |
 
 ---
 
 ## Temuan Aktif
 
-_Tidak ada temuan code review aktif._
+### CR-111 - `recordLoopUsage` diklaim fire-and-forget tetapi caller tetap menunggu insert KPI
+
+- **Type:** performance / consistency
+- **Severity:** low
+- **Location:** `apps/server/src/kpi/recordUsage.ts:4`, `apps/server/src/registry/dispatcher.ts:155`, `apps/server/src/workflow/engine.ts:314`
+- **Status:** OPEN
+
+**Temuan**
+Komentar kontrak menyebut pencatatan usage sebagai fire-and-forget, tetapi dua caller utama tetap `await` proses insert usage.
+
+Bukti:
+```ts
+// apps/server/src/kpi/recordUsage.ts:4
+// Fire-and-forget di pemanggil: kegagalan pencatatan biaya TIDAK boleh menggagalkan kerja agent.
+
+// apps/server/src/registry/dispatcher.ts:155
+await recordLoopUsage(
+
+// apps/server/src/workflow/engine.ts:314
+await recordLoopUsage(
+```
+
+**Kenapa penting**
+Error memang sudah di-`catch`, tetapi latency/keterlambatan DB `usage_events` tetap ikut menahan penyelesaian task/directive/workflow step. Ini juga membuat komentar dan perilaku runtime tidak sinkron, sehingga fixer berikutnya bisa salah mengasumsikan pencatatan KPI tidak berada di jalur kritis.
+
+**Usulan perbaikan**
+Pilih salah satu kontrak:
+1. Jika benar ingin fire-and-forget, ubah caller menjadi `void recordLoopUsage(...).catch(...)` dan pastikan logging error tetap ada.
+2. Jika sengaja ingin menunggu agar usage pasti tersimpan sebelum status final, ubah komentar `recordUsage.ts` dan komentar caller supaya tidak menyebut fire-and-forget.
+3. Tambahkan test kecil dengan store `addUsageEvent` yang tertahan/reject untuk memastikan perilaku yang dipilih: tidak menunda jalur kerja, atau sengaja menunggu.

@@ -59,6 +59,9 @@ export class OfficeScene extends Phaser.Scene {
   // Phase 5.2: aset map (mapKey) yang sedang dirender + handle tilemap/layer aktif agar
   // bisa di-destroy & dibangun ulang saat lantai berganti. `loadingMapKey` mencegah load ganda.
   private renderedMapKey = DEFAULT_MAP_KEY;
+  // BUG-118: map yang DIINGINKAN lantai aktif TERBARU. Callback async load yang selesai untuk
+  // map yang sudah bukan `desiredMapKey` (user keburu pindah lantai lagi) wajib diabaikan.
+  private desiredMapKey = DEFAULT_MAP_KEY;
   private loadingMapKey: string | null = null;
   private tilemap: Phaser.Tilemaps.Tilemap | null = null;
   private groundLayer: Phaser.Tilemaps.TilemapLayer | null = null;
@@ -183,6 +186,8 @@ export class OfficeScene extends Phaser.Scene {
         `[OfficeScene] mapKey '${desired}' belum punya aset terdaftar — render '${DEFAULT_MAP_KEY}'.`,
       );
     }
+    // BUG-118: catat map yang diinginkan lantai aktif TERBARU (dipakai untuk membuang callback stale).
+    this.desiredMapKey = assetKey;
     if (assetKey === this.renderedMapKey || assetKey === this.loadingMapKey) return;
 
     if (this.cache.tilemap.exists(assetKey)) {
@@ -197,6 +202,9 @@ export class OfficeScene extends Phaser.Scene {
     this.load.once(Phaser.Loader.Events.COMPLETE, () => {
       this.loadingMapKey = null;
       if (!this.cache.tilemap.exists(assetKey)) return;
+      // BUG-118: bila user keburu pindah lantai lagi sebelum load ini selesai, `assetKey` sudah
+      // bukan map yang diinginkan → JANGAN render map basi (hindari denah lantai salah).
+      if (assetKey !== this.desiredMapKey) return;
       this.buildMap(assetKey);
       this.renderedMapKey = assetKey;
     });
