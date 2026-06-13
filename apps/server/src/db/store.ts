@@ -37,6 +37,8 @@ import type {
   Task,
   TaskStatus,
   CommsMessage,
+  CommsParty,
+  CommsChannel,
 } from "@vc/shared";
 import { SCHEMA_STATEMENTS } from "./schema.js";
 import { MysqlMemoryStore } from "./memoryStore.js";
@@ -125,6 +127,16 @@ export interface NewAuditEntry {
   action: string;
   approvalId?: Id;
   detail?: Record<string, unknown>;
+}
+
+/** Input satu pesan comms (Phase 6; id/at diisi store). Ter-scope per company. */
+export interface NewCommsMessage {
+  companyId: Id;
+  threadId: Id;
+  from: CommsParty;
+  to: CommsParty;
+  channel: CommsChannel;
+  text: string;
 }
 
 /** Input pencatatan pemakaian LLM (Phase 5.4; id/at diisi store). Satu baris per (loop, tier). */
@@ -1087,11 +1099,48 @@ export class ConfigStore {
 
   // ---------------- Comms ----------------
 
-  async listCommsByCompany(_companyId: Id): Promise<CommsMessage[]> {
-    // Phase 1–2: belum ada pemetaan thread→company dan belum ada produsen comms.
-    // Sengaja kembalikan kosong: mengembalikan SEMUA pesan akan membocorkan percakapan
-    // lintas-company begitu tabel terisi. Comms ter-scope per company menyusul di Phase 3.
-    return [];
+  /**
+   * Phase 6: simpan satu pesan percakapan, ter-scope per company. Produsen: workflow engine
+   * (permintaan approval / notifikasi owner) & dispatcher (jawaban single-agent). Membuat tab
+   * Comms terisi walau WhatsApp mock/tak terkonfigurasi.
+   */
+  async addCommsMessage(input: NewCommsMessage, now = Date.now()): Promise<CommsMessage> {
+    const id = defaultGenId("cm");
+    await this.run(
+      "INSERT INTO comms_messages (id, company_id, thread_id, from_party, to_party, channel, `text`, at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [id, input.companyId, input.threadId, input.from, input.to, input.channel, input.text, now],
+    );
+    return {
+      id,
+      threadId: input.threadId,
+      from: input.from,
+      to: input.to,
+      channel: input.channel,
+      text: input.text,
+      at: now,
+    };
+  }
+
+  async listCommsByCompany(companyId: Id): Promise<CommsMessage[]> {
+    // Ter-scope per company (kolom company_id) → tidak membocorkan percakapan lintas-company.
+    const rows = await this.all(
+      "SELECT * FROM comms_messages WHERE company_id = ? ORDER BY at, id",
+      [companyId],
+    );
+    return rows.map((r) => this.rowToCommsMessage(r));
+  }
+
+  private rowToCommsMessage(r: Record<string, unknown>): CommsMessage {
+    return {
+      id: r["id"] as Id,
+      threadId: r["thread_id"] as Id,
+      from: r["from_party"] as CommsParty,
+      to: r["to_party"] as CommsParty,
+      channel: r["channel"] as CommsChannel,
+      text: r["text"] as string,
+      at: Number(r["at"]),
+    };
   }
 
   // ---------------- World snapshot ----------------

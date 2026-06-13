@@ -147,6 +147,20 @@ export class DirectiveDispatcher {
       // BUG-111: task DAN directive jadi `blocked` (jangan tinggalkan directive `in_progress`).
       const updated = (await store.updateTask(task.id, { status: "blocked" })) ?? task;
       await store.updateDirectiveStatus(directive.id, "blocked");
+      // Phase 6: alasan berhenti → Comms agar owner tahu kenapa (walau WhatsApp mock).
+      await store
+        .addCommsMessage(
+          {
+            companyId,
+            threadId: directive.id,
+            from: agent.name,
+            to: "user",
+            channel: "whatsapp",
+            text: `Tugas tertahan: ${message}`,
+          },
+          now(),
+        )
+        .catch((e) => console.error("[comms] addCommsMessage:", e));
       emitTaskUpdate(updated);
       return { status: "error", finalText: null, task: updated, error: message };
     }
@@ -170,6 +184,20 @@ export class DirectiveDispatcher {
       const updated =
         (await store.updateTask(task.id, { status: "done", outputRef: artifact.id })) ?? task;
       await store.updateDirectiveStatus(directive.id, "done");
+      // Phase 6: jawaban final agent → Comms (tampil di tab Comms walau WhatsApp mock).
+      await store
+        .addCommsMessage(
+          {
+            companyId,
+            threadId: directive.id,
+            from: agent.name,
+            to: "user",
+            channel: "whatsapp",
+            text: result.finalText,
+          },
+          now(),
+        )
+        .catch((e) => console.error("[comms] addCommsMessage:", e));
       emitTaskUpdate(updated);
       return { status: result.status, finalText: result.finalText, task: updated, artifact };
     }

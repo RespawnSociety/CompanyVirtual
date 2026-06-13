@@ -1,6 +1,7 @@
 /**
- * CommsViewer (roadmap 1.7) — penampil percakapan WhatsApp/internal. Phase 1: data nyata
- * (comms) masih kosong sampai Phase 3 (WA relay 2 arah); saat kosong tampilkan placeholder.
+ * CommsViewer (roadmap 1.7) — penampil percakapan owner↔agent. Sejak Phase 6 terisi nyata:
+ * pesan agent (permintaan approval, jawaban, notifikasi) tersimpan & tampil di sini per company,
+ * walau WhatsApp mock/tak terkonfigurasi. Saat masih kosong → tampilkan contoh placeholder.
  */
 
 import { useEffect, useState } from "react";
@@ -13,19 +14,26 @@ const PLACEHOLDER: CommsMessage[] = [
   { id: "c3", threadId: "t1", from: "Manager", to: "user", channel: "whatsapp", text: "(contoh) Draft caption siap & sudah direview. Mohon approval untuk publish.", at: 3 },
 ];
 
-export function CommsViewer({ companyId }: { companyId: string | null }): JSX.Element {
+export function CommsViewer({
+  companyId,
+  refreshTick,
+}: {
+  companyId: string | null;
+  refreshTick?: number;
+}): JSX.Element {
   const [msgs, setMsgs] = useState<CommsMessage[]>([]);
   const [loaded, setLoaded] = useState(false);
 
+  // CR-109: bersihkan data company lama HANYA saat ganti company (bukan tiap refreshTick) agar
+  // refetch live tak berkedip kosong→isi.
   useEffect(() => {
-    if (!companyId) {
-      setMsgs([]);
-      setLoaded(false);
-      return;
-    }
-    // CR-109: bersihkan data lama + guard ignore agar respons company lama tak menimpa yang baru.
     setMsgs([]);
     setLoaded(false);
+  }, [companyId]);
+
+  // Fetch saat company berganti ATAU ada event agent baru (refreshTick, Phase 6) → Comms live.
+  useEffect(() => {
+    if (!companyId) return;
     let ignore = false;
     api
       .listComms(companyId)
@@ -41,7 +49,7 @@ export function CommsViewer({ companyId }: { companyId: string | null }): JSX.El
     return () => {
       ignore = true;
     };
-  }, [companyId]);
+  }, [companyId, refreshTick]);
 
   if (!companyId) {
     return (

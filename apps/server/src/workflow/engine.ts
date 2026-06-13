@@ -113,12 +113,14 @@ export class WorkflowEngine {
       const blocked =
         (await store.updateWorkflowRun(run.id, { status: "blocked" }).catch(() => undefined)) ??
         run;
+      const at = (this.deps.now ?? Date.now)();
       this.emit(dept.companyId, {
         type: "error",
         agentId: dept.id,
-        at: (this.deps.now ?? Date.now)(),
+        at,
         message: `workflow gagal: ${msg}`,
       });
+      await this.messageOwner(dept, directive.id, `Workflow gagal: ${msg}`, at).catch(() => undefined);
       return blocked;
     });
 
@@ -175,6 +177,21 @@ export class WorkflowEngine {
   }
 
   /**
+   * Phase 6: kirim pesan ke owner — emit realtime (UI) + PERSIST ke Comms agar tampil di tab
+   * Comms walau WhatsApp mock/tak terkonfigurasi. `from` = nama departemen (wajah perusahaan).
+   * Persist tak boleh menggagalkan workflow → catch & log.
+   */
+  private async messageOwner(dept: Department, threadId: Id, text: string, at: number): Promise<void> {
+    this.emit(dept.companyId, { type: "message", agentId: dept.id, at, to: "user", text });
+    await this.deps.store
+      .addCommsMessage(
+        { companyId: dept.companyId, threadId, from: dept.name, to: "user", channel: "whatsapp", text },
+        at,
+      )
+      .catch((e) => console.error("[comms] addCommsMessage:", e));
+  }
+
+  /**
    * Jalankan pipeline mulai indeks `startIndex`. `note` = feedback (revisi) untuk step pertama.
    * `grantApprovalId` (bila ada) = segmen ini sudah di-approve owner di gate → skill `risky`
    * boleh eksekusi (tetap lewat guardrail). Diteruskan ke tiap step sampai gate berikutnya.
@@ -199,6 +216,7 @@ export class WorkflowEngine {
     let pendingNote = note;
     let i = startIndex;
     let guard = 0;
+    let lastOutput = "";
 
     while (i >= 0 && i < steps.length) {
       if (guard++ > hardCap) throw new Error(`workflow melebihi batas ${hardCap} langkah (loop?)`);
@@ -208,6 +226,7 @@ export class WorkflowEngine {
       const out = await this.runStep(dept, step, run, context, pendingNote, grantApprovalId);
       pendingNote = undefined;
       context.set(step.role, out.finalText);
+      lastOutput = out.finalText;
       run = out.run;
 
       // Aksi berisiko tertahan (mis. ditolak guardrail §4.4) → hentikan run sebagai blocked.
@@ -251,6 +270,15 @@ export class WorkflowEngine {
       i += 1; // tanpa next → maju; bila habis, loop berhenti → selesai
     }
 
+    // Selesai: beri tahu owner + ringkasan hasil akhir (juga tampil di tab Comms).
+    if (lastOutput) {
+      await this.messageOwner(
+        dept,
+        run.directiveId,
+        `✅ Selesai memproses arahan. Hasil akhir:\n${truncate(lastOutput, 600)}`,
+        (this.deps.now ?? Date.now)(),
+      );
+    }
     return this.finish(run.id, run.directiveId);
   }
 
@@ -382,13 +410,12 @@ export class WorkflowEngine {
           approvalId,
           detail: { reason: verdict.reason ?? "guardrail", summary: draft.summary },
         });
-        this.emit(dept.companyId, {
-          type: "message",
-          agentId: dept.id,
+        await this.messageOwner(
+          dept,
+          approvalId,
+          `Publikasi ditahan guardrail: ${verdict.reason ?? "tidak diizinkan"}.`,
           at,
-          to: "user",
-          text: `Publikasi ditahan guardrail: ${verdict.reason ?? "tidak diizinkan"}.`,
-        });
+        );
         return { ...base, status: "rejected", note: verdict.reason ?? "guardrail" };
       }
       await store.addAuditEntry({
@@ -443,16 +470,14 @@ export class WorkflowEngine {
       approvalId,
       summary,
     });
-    // Manager = "wajah": kirim ringkasan minta approval ke owner (UI/WA meneruskan).
-    this.emit(dept.companyId, {
-      type: "message",
-      agentId: dept.id,
-      at,
-      to: "user",
-      text:
-        `Minta persetujuan (approvalId=${approvalId}):\n${summary}\n\n` +
+    // Manager = "wajah": kirim ringkasan minta approval ke owner (UI/WA meneruskan + tab Comms).
+    await this.messageOwner(
+      dept,
+      run.directiveId,
+      `Minta persetujuan (approvalId=${approvalId}):\n${summary}\n\n` +
         `Balas APPROVE untuk lanjut, atau REVISI: <alasan> untuk perbaikan.`,
-    });
+      at,
+    );
     return updated;
   }
 
@@ -470,13 +495,12 @@ export class WorkflowEngine {
     await store.updateDirectiveStatus(run.directiveId, "blocked");
     const blocked =
       (await store.updateWorkflowRun(run.id, { status: "blocked", approvalId: null }))!;
-    this.emit(dept.companyId, {
-      type: "message",
-      agentId: dept.id,
-      at: now(),
-      to: "user",
-      text: `Workflow berhenti (perlu perhatian): ${reason}`,
-    });
+    await this.messageOwner(
+      dept,
+      run.directiveId,
+      `Workflow berhenti (perlu perhatian): ${reason}`,
+      now(),
+    );
     return blocked;
   }
 

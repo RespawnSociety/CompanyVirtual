@@ -209,7 +209,7 @@ export function App(): JSX.Element {
         )}
         {tab === "tasks" && <TaskBoard companyId={companyId} refreshTick={refreshTick} world={world} />}
         {tab === "kpi" && <KpiDashboard companyId={companyId} refreshTick={refreshTick} />}
-        {tab === "comms" && <CommsViewer companyId={companyId} />}
+        {tab === "comms" && <CommsViewer companyId={companyId} refreshTick={refreshTick} />}
       </div>
     </div>
   );

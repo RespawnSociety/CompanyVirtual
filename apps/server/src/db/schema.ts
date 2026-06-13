@@ -135,15 +135,19 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
     CONSTRAINT fk_wfruns_company FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
   ) ${TABLE_OPTS}`,
 
+  // Phase 6 — Comms: pesan agent↔owner (mis. permintaan approval & jawaban) ter-scope per company
+  // sehingga tampil di tab Comms walau WhatsApp mock/tak terkonfigurasi.
   `CREATE TABLE IF NOT EXISTS comms_messages (
     id          VARCHAR(64) PRIMARY KEY,
+    company_id  VARCHAR(64) NULL,
     thread_id   VARCHAR(64) NOT NULL,
     from_party  VARCHAR(64) NOT NULL,
     to_party    VARCHAR(64) NOT NULL,
     channel     VARCHAR(32) NOT NULL,
     text        TEXT NOT NULL,
     at          BIGINT NOT NULL,
-    INDEX idx_comms_thread (thread_id)
+    INDEX idx_comms_thread (thread_id),
+    INDEX idx_comms_company (company_id)
   ) ${TABLE_OPTS}`,
 
   `CREATE TABLE IF NOT EXISTS memory_items (
@@ -205,4 +209,11 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
     INDEX idx_usage_company_dept (company_id, department_id),
     CONSTRAINT fk_usage_company FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
   ) ${TABLE_OPTS}`,
+
+  // ---- Migrasi idempotent (untuk DB yang sudah ada sebelum kolom ditambahkan) ----
+  // MariaDB (10.0.2+, termasuk 10.4 XAMPP) mendukung `IF NOT EXISTS` di ALTER → aman dijalankan
+  // berulang & no-op pada DB baru (kolom/indeks sudah dibuat oleh CREATE di atas).
+  // Phase 6: comms_messages.company_id agar pesan ter-scope per company (lihat tabel di atas).
+  `ALTER TABLE comms_messages ADD COLUMN IF NOT EXISTS company_id VARCHAR(64) NULL`,
+  `ALTER TABLE comms_messages ADD INDEX IF NOT EXISTS idx_comms_company (company_id)`,
 ];
