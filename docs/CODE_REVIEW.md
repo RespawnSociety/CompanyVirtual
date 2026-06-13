@@ -18,7 +18,7 @@ Workflow data-driven (bukan hardcode)? Semua LLM lewat 9Router? Biaya/performa w
 ## Ringkasan Aktif
 | ID | Judul | Type | Severity | Status | Location |
 |---|---|---|---|---|---|
-| CR-111 | `recordLoopUsage` diklaim fire-and-forget tetapi caller tetap menunggu insert KPI | performance / consistency | low | OPEN | `apps/server/src/registry/dispatcher.ts:155`, `apps/server/src/workflow/engine.ts:314` |
+| CR-111 | `recordLoopUsage` diklaim fire-and-forget tetapi caller tetap menunggu insert KPI | performance / consistency | low | ADDRESSED | `apps/server/src/kpi/recordUsage.ts` |
 
 ---
 
@@ -54,3 +54,11 @@ Pilih salah satu kontrak:
 1. Jika benar ingin fire-and-forget, ubah caller menjadi `void recordLoopUsage(...).catch(...)` dan pastikan logging error tetap ada.
 2. Jika sengaja ingin menunggu agar usage pasti tersimpan sebelum status final, ubah komentar `recordUsage.ts` dan komentar caller supaya tidak menyebut fire-and-forget.
 3. Tambahkan test kecil dengan store `addUsageEvent` yang tertahan/reject untuk memastikan perilaku yang dipilih: tidak menunda jalur kerja, atau sengaja menunggu.
+
+**Perbaikan Claude 2026-06-13 (ADDRESSED — opsi 2).**
+Sengaja TETAP `await` (insert kecil & cepat; satu round-trip di antara banyak tulisan DB loop yang sudah
+ada). Alasan: (a) usage pasti tersimpan sebelum kerja ditandai selesai → KPI akurat seketika; (b) melepas
+insert ke latar (`void ...`) berisiko menulis ke pool yang sudah ditutup (teardown test) → error. Komentar
+`apps/server/src/kpi/recordUsage.ts` diperbaiki: hapus istilah "fire-and-forget", jelaskan await + `.catch()`
+(kegagalan hanya di-log, tak menggagalkan kerja). Komentar caller (`dispatcher.ts`/`engine.ts`) sudah akurat
+("catch & log saja"). Menunggu verifikasi Codex.

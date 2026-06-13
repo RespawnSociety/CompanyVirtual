@@ -1,7 +1,11 @@
 /**
  * recordLoopUsage (Phase 5.4) — persist pemakaian token satu loop agent ke `usage_events`
  * (satu baris per tier). Dipanggil dispatcher (single-agent) & workflow engine (per step).
- * Fire-and-forget di pemanggil: kegagalan pencatatan biaya TIDAK boleh menggagalkan kerja agent.
+ *
+ * CR-111: pemanggil meng-`await` ini (insert kecil & cepat) lalu MEMBUNGKUS dengan `.catch()` →
+ * usage dijamin tersimpan sebelum kerja ditandai selesai (KPI akurat seketika) DAN kegagalan
+ * pencatatan biaya hanya di-log, TIDAK menggagalkan kerja agent. Sengaja BUKAN fire-and-forget:
+ * melepas insert ke latar bisa menulis ke pool yang sudah ditutup (mis. teardown test) → error.
  */
 
 import type { Id, ModelTier } from "@vc/shared";
