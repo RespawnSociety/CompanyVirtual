@@ -31,7 +31,9 @@
     "prespike:loop": "npm run build",
     "spike:loop": "tsx infra/scripts/spike-loop.ts",
     "prespike:wa": "npm run build",
-    "spike:wa": "tsx infra/scripts/spike-wa.ts"
+    "spike:wa": "tsx infra/scripts/spike-wa.ts",
+    "prevault": "npm run build",
+    "vault": "tsx infra/scripts/vault.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

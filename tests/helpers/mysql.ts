@@ -23,6 +23,9 @@ function baseConfig(): { host: string; port: number; user: string; password: str
 
 /** Tabel yang di-TRUNCATE antar-test (urutan bebas karena FK checks dimatikan). */
 const TABLES = [
+  "audit_entries",
+  "approvals",
+  "workflow_runs",
   "artifacts",
   "tasks",
   "directives",

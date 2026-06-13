@@ -158,4 +158,33 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
     embedding   LONGTEXT NULL,
     INDEX idx_memory_namespace (namespace)
   ) ${TABLE_OPTS}`,
+
+  // Phase 4.3 — Approval (dipersist agar audit "approval manual" punya bukti: status, waktu, note).
+  `CREATE TABLE IF NOT EXISTS approvals (
+    id          VARCHAR(64) PRIMARY KEY,
+    company_id  VARCHAR(64) NULL,
+    summary     TEXT NOT NULL,
+    artifact_id VARCHAR(64) NULL,
+    channel     VARCHAR(32) NOT NULL,
+    status      VARCHAR(32) NOT NULL,
+    note        TEXT NULL,
+    decided_at  BIGINT NULL,
+    created_at  BIGINT NOT NULL,
+    INDEX idx_approvals_company (company_id),
+    CONSTRAINT fk_approvals_company FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+  ) ${TABLE_OPTS}`,
+
+  // Phase 4.3 — Audit log: satu baris per aksi/approval (plan §8). `detail` JSON non-sensitif.
+  `CREATE TABLE IF NOT EXISTS audit_entries (
+    id          VARCHAR(64) PRIMARY KEY,
+    company_id  VARCHAR(64) NULL,
+    agent_id    VARCHAR(64) NOT NULL,
+    action      VARCHAR(64) NOT NULL,
+    approval_id VARCHAR(64) NULL,
+    detail      LONGTEXT NOT NULL,
+    at          BIGINT NOT NULL,
+    INDEX idx_audit_company (company_id),
+    INDEX idx_audit_agent_action (agent_id, action),
+    CONSTRAINT fk_audit_company FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+  ) ${TABLE_OPTS}`,
 ];

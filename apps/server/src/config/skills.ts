@@ -24,9 +24,9 @@ export const KNOWN_SKILLS: readonly SkillCatalogEntry[] = [
   { name: "review_content", description: "Review kualitas, brand voice, kepatuhan.", implemented: true, risky: false },
   { name: "message_agent", description: "Kirim pesan/delegasi ke agent lain.", implemented: false, risky: false },
   { name: "ask_user", description: "Tanya/klarifikasi ke owner via WhatsApp.", implemented: false, risky: false },
-  { name: "ig_post", description: "Publish ke Instagram (approval-gated).", implemented: false, risky: true },
-  { name: "twitter_post", description: "Publish ke Twitter/X (approval-gated).", implemented: false, risky: true },
-  { name: "schedule_post", description: "Jadwalkan publish konten (approval-gated).", implemented: false, risky: true },
+  { name: "ig_post", description: "Publish ke Instagram (approval-gated).", implemented: true, risky: true },
+  { name: "twitter_post", description: "Publish ke Twitter/X (approval-gated).", implemented: true, risky: true },
+  { name: "schedule_post", description: "Jadwalkan publish konten (approval-gated).", implemented: true, risky: true },
 ];
 
 /** Set nama skill yang dikenal (untuk validasi skillScope/skillPool). */

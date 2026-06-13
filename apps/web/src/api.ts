@@ -6,6 +6,7 @@
 import type {
   AgentProfile,
   Artifact,
+  AuditEntry,
   CommsMessage,
   Company,
   Department,
@@ -38,10 +39,23 @@ export interface CreateDepartmentResult {
 
 const BASE = "/api";
 
+/**
+ * Token bearer opsional (BUG-107/CR-101). Bila server dilindungi `API_AUTH_TOKEN`, web HARUS
+ * mengirim `Authorization: Bearer <token>`. Token build-time via `VITE_API_AUTH_TOKEN`.
+ * CATATAN keamanan: token ini ter-embed di bundle web → hanya cocok untuk dev/token bersama,
+ * bukan rahasia per-user. Untuk hosting publik, pakai reverse-proxy/login (lihat docs).
+ */
+export const AUTH_TOKEN: string | undefined =
+  (import.meta.env?.VITE_API_AUTH_TOKEN as string | undefined)?.trim() || undefined;
+
+function authHeaders(): Record<string, string> {
+  return AUTH_TOKEN ? { authorization: `Bearer ${AUTH_TOKEN}` } : {};
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "content-type": "application/json" },
     ...init,
+    headers: { "content-type": "application/json", ...authHeaders(), ...(init?.headers ?? {}) },
   });
   if (!res.ok) {
     let detail = "";
@@ -76,6 +90,8 @@ export const api = {
   listArtifacts: (id: string) => req<Artifact[]>(`/companies/${id}/artifacts`),
   listDirectives: (id: string) => req<Directive[]>(`/companies/${id}/directives`),
   listComms: (id: string) => req<CommsMessage[]>(`/companies/${id}/comms`),
+  // Audit log (Phase 4.3) — jejak aksi & approval.
+  listAudit: (id: string) => req<AuditEntry[]>(`/companies/${id}/audit`),
 
   // Floor
   listFloors: (companyId: string) => req<Floor[]>(`/companies/${companyId}/floors`),

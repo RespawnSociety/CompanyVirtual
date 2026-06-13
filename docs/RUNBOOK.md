@@ -218,6 +218,65 @@ npm test    # 57 test — termasuk tests/workflow.test.ts (pipeline, loop revisi
 
 ---
 
+## Phase 4 — Aksi Eksternal + Keamanan 🔐
+
+Publish ke sosmed (approval-gated + preview + guardrail + audit), Credential Vault terenkripsi,
+dan auth boundary REST+socket (BUG-107/108). **Default `POST_PROVIDER=mock` → dry-run** (pipeline
+penuh tanpa benar-benar terbit). Posting NYATA = `playwright` (butuh setup manual).
+
+### Catatan teknis
+- **Vault (4.1):** `apps/server/src/security/vault.ts`. Mode `file` (default): AES-256-GCM, master key
+  dari `VAULT_MASTER_KEY` (scrypt), file `data/vault.enc` (di-`.gitignore`), + fallback env per
+  logical-key (`VAULT_<KEY>`). Nilai secret tak pernah di-log.
+- **Skill sosial (4.2):** `ig_post`/`twitter_post`/`schedule_post` (semua `risky`). Provider via
+  `POST_PROVIDER`: `mock` (dry-run) | `playwright` (browser nyata; domain allowlist least-privilege).
+- **Audit (4.3):** tabel `audit_entries` + `approvals`. `GET /api/companies/:id/audit`.
+- **Guardrails (4.4):** `rate_limit {maxPostsPerDay}` (hitung audit 24 jam) + `posting_hours {from,to}`
+  (jam lokal) ditegakkan engine pra-publish. Marketing template: Social Media = approval + rate_limit 5/hari.
+- **Auth (BUG-107/108):** helper `security/auth.ts` dipakai REST + Socket.IO; web kirim bearer
+  (`VITE_API_AUTH_TOKEN`) di REST dan socket handshake.
+
+### Kelola Vault (CLI)
+```bash
+# .env: VAULT_MODE=file, VAULT_MASTER_KEY=<passphrase rahasia>, VAULT_PATH=data/vault.enc
+npm run vault -- set instagram.username       # lalu ketik nilai + Enter (tak masuk histori shell)
+npm run vault -- set instagram.password
+npm run vault -- list                         # daftar KEY (bukan nilai)
+npm run vault -- has instagram.password
+npm run vault -- del instagram.username
+```
+
+### Verifikasi cepat (logika, tanpa browser/akun)
+```bash
+npm test    # 87 test — + vault, social (mock), guardrails, audit/approval store,
+            #   publish via engine (approve→dry-run + guardrail rate-limit block), auth + realtime
+```
+
+### DoD Fase 4 — uji manual
+**A. Dry-run (default, tanpa akun/browser):**
+1. `.env`: `POST_PROVIDER=mock` (default). `npm run dev:server` + `npm run dev:web` (+ 9Router & MySQL hidup).
+2. Tab **Workflow** → arahan ke Marketing → pipeline → **menunggu approval** → **APPROVE**.
+3. **Lolos bila:** run `done`; `GET /api/companies/:id/audit` memuat `approval_requested` →
+   `approval_decided` → `publish_authorized` → `schedule_post` (dengan `dryRun:true`, `postId` `mock-…`).
+   Cek guardrail: posting ke-6 dalam sehari (Social Media maxPostsPerDay 5) → run `blocked` + audit `publish_blocked`.
+
+**B. Posting NYATA ke akun test (butuh setup manual):**
+1. `npm i -D playwright && npx playwright install chromium`.
+2. Simpan kredensial akun test: `npm run vault -- set instagram.username|password` (atau `instagram.sessionState`).
+3. Lengkapi langkah UI di `packages/agent-runtime/src/skills/playwrightPublisher.ts` (`postToPlatform`)
+   sesuai versi UI live (login → composer → submit). Default melempar agar tak ada false "terbit".
+4. `.env`: `POST_PROVIDER=playwright`, `POST_PLAYWRIGHT_HEADLESS=false` (lihat browser saat debug).
+5. Jalankan pipeline → APPROVE → **lolos bila** konten benar-benar terbit di akun test + audit `schedule_post` `dryRun:false`.
+
+**C. Auth boundary (hosting non-lokal):**
+1. `.env`: `API_AUTH_TOKEN=<token>` dan `VITE_API_AUTH_TOKEN=<token sama>`. `npm run build:web` lalu serve.
+2. **Lolos bila:** web tetap bisa load (`/api/*` 200 + socket connect); request/socket TANPA token → 401/`connect_error`.
+
+> Smoke audit tanpa browser: `POST /api/departments/:id/directives` → poll `runs` → `POST /api/approvals/:id {decision:"approve"}`
+> → `GET /api/companies/:id/audit` memuat jejak approval + publish (dry-run).
+
+---
+
 ## Menjalankan Codex (review & bug hunt)
 
 > Codex = **Reviewer & Bug Hunter** (lihat `AGENTS.md`). Ia membaca `AGENTS.md` otomatis;

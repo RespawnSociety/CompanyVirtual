@@ -196,6 +196,42 @@ Jalur HTTP/Cloud nyata: jalankan server lalu daftarkan webhook (lihat RUNBOOK).
 - **Terbukti LIVE** (kr/claude-sonnet-4.5): directive caption diskon → pipeline penuh → review loop 2× →
   approval pause → APPROVE → done; konten AI nyata. Unit test memakai MockRouterClient (deterministik).
 
+## Phase 4 — keputusan teknis (aksi eksternal + keamanan)
+
+- **Credential Vault (4.1) = encrypted file** (keputusan owner). `apps/server/src/security/vault.ts`:
+  `FileVault` AES-256-GCM, master key di-scrypt dari `VAULT_MASTER_KEY` (salt statis app), payload =
+  satu envelope JSON `{v,iv,tag,ct}` (seluruh map secret di-enkripsi utuh). Pure-JS (`node:crypto`),
+  tanpa native build. Plus `EnvVault` (fallback dev, `VAULT_<KEY>`) + `LayeredVault` (file→env) +
+  `createVaultFromEnv` (mode file/env/noop). File default `data/vault.enc` (di-`.gitignore`). **Nilai
+  secret tak pernah di-log** (hanya key & ada/tidaknya). CLI `npm run vault` (set via STDIN).
+  *Alasan menolak keychain/sops/age:* rumit lintas-platform (Windows) & butuh tool eksternal —
+  konsisten dengan keputusan "pure-JS, tanpa native build" (lihat keputusan DB).
+- **Skill sosial (4.2) = provider pluggable**, default **mock/dry-run**, jalur nyata **Playwright**
+  (keputusan owner; bukan API resmi). `socialPost.ts` (skill generik) + `playwrightPublisher.ts`
+  (lazy-import `playwright` via specifier non-literal → build tak butuh paket terpasang; kredensial
+  dari Vault; **domain allowlist** per platform = least-privilege §4.4). `ig_post`/`twitter_post`/
+  `schedule_post` semua `risky`. Pilih via `POST_PROVIDER`. Pola sama web_search/web_fetch (mock dulu).
+  *Catatan:* selektor UI IG/Twitter rawan berubah & ToS → `postToPlatform` sengaja placeholder
+  (melempar) agar tak ada false "terbit"; operator mengisi sesuai UI + akun test live.
+- **Double-approval dihindari (desain):** gate workflow `approval_gate` = persetujuan owner. Saat
+  resume `approve`, engine **pra-otorisasi** segmen pasca-gate (`grantApprovalId` diteruskan ke step):
+  skill `risky` (publish) boleh eksekusi via `requestApproval` yang **meng-grant** TAPI tetap menjalankan
+  guardrail. Jadi owner approve **sekali**, bukan dua kali. Di luar workflow (dispatch langsung) skill
+  `risky` tetap default-deny (blocked) — defense-in-depth.
+- **Guardrails (4.4) = penegakan KODE** (`security/guardrails.ts`, fungsi pure): `rate_limit`
+  (`maxPostsPerDay`, dihitung dari `audit_entries` 24 jam terakhir untuk action publish) & `posting_hours`
+  (`{from,to}` jam lokal, dukung lewat tengah malam). Chokepoint = `WorkflowEngine.makeGuardedApproval`
+  (sebelum eksekusi skill). Gagal guardrail → `rejected` → step `blocked` → run `blocked` + audit `publish_blocked`.
+- **Audit (4.3) dipersist** (`audit_entries` + `approvals`). Kontrak `@vc/shared`: `SkillContext.audit`
+  (skill mendeskripsikan aksi; orchestrator isi id/agentId/companyId/at) + `ApprovalRequest` kini punya
+  tabel (status/note/decidedAt) agar "approval manual" punya jejak. Engine mencatat `approval_requested`/
+  `approval_decided`/`publish_authorized`/`publish_blocked`; skill mencatat aksi (`ig_post`/dst) + preview.
+- **Auth boundary (BUG-107/108/CR-101) ditutup**: helper tunggal `security/auth.ts`
+  (`hasValidBearer`/`hasValidSocketToken`, perbandingan waktu-konstan) dipakai REST (`server.ts`) DAN
+  Socket.IO (`realtime.ts` `io.use`). Web kirim token (`VITE_API_AUTH_TOKEN`) di REST (`Authorization`)
+  & socket (`handshake.auth.token`). Strategi = **token dev build-time** (ter-embed di bundle → dev/token
+  bersama; produksi pakai reverse-proxy/login, didokumentasikan).
+
 ## Kontrak yang dikunci di Phase 0
 
 - **`@vc/shared`** — sumber kebenaran tipe: data model (plan §9), `AgentEvent`, kontrak

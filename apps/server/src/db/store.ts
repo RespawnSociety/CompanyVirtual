@@ -14,7 +14,10 @@ import mysql, { type Pool, type RowDataPacket, type ResultSetHeader } from "mysq
 import { defaultGenId } from "@vc/agent-runtime";
 import type {
   AgentProfile,
+  ApprovalRequest,
+  ApprovalStatus,
   Artifact,
+  AuditEntry,
   Company,
   Department,
   Directive,
@@ -103,6 +106,23 @@ export interface NewWorkflowRun {
   departmentId: Id;
   workflowId: Id;
   currentStepId?: Id;
+}
+
+/** Input pembuatan approval (Phase 4; id boleh diberi agar konsisten dgn engine approvalId). */
+export interface NewApproval {
+  id?: Id;
+  companyId?: Id;
+  summary: string;
+  artifactId?: Id;
+}
+
+/** Input pembuatan audit entry (Phase 4.3; id/at diisi store). */
+export interface NewAuditEntry {
+  companyId?: Id;
+  agentId: Id;
+  action: string;
+  approvalId?: Id;
+  detail?: Record<string, unknown>;
 }
 
 /** Input pembuatan/replace agent (id auto bila tak diberi). */
@@ -886,6 +906,120 @@ export class ConfigStore {
     const approvalId = r["approval_id"] as string | null;
     if (approvalId) run.approvalId = approvalId;
     return run;
+  }
+
+  // ---------------- Approval (Phase 4.3) ----------------
+
+  /** Buat ApprovalRequest (status `pending`). `id` opsional agar cocok dgn approvalId engine. */
+  async createApproval(input: NewApproval, now = Date.now()): Promise<ApprovalRequest> {
+    const id = input.id ?? defaultGenId("appr");
+    await this.run(
+      "INSERT INTO approvals (id, company_id, summary, artifact_id, channel, status, note, decided_at, created_at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        id,
+        input.companyId ?? null,
+        input.summary,
+        input.artifactId ?? null,
+        "whatsapp",
+        "pending",
+        null,
+        null,
+        now,
+      ],
+    );
+    return (await this.getApproval(id))!;
+  }
+
+  async getApproval(id: Id): Promise<ApprovalRequest | undefined> {
+    const row = await this.one("SELECT * FROM approvals WHERE id = ?", [id]);
+    return row ? this.rowToApproval(row) : undefined;
+  }
+
+  /** Setel keputusan approval (approved/rejected) + catatan & waktu. */
+  async decideApproval(
+    id: Id,
+    status: Exclude<ApprovalStatus, "pending">,
+    note?: string,
+    now = Date.now(),
+  ): Promise<ApprovalRequest | undefined> {
+    const res = await this.run(
+      "UPDATE approvals SET status = ?, note = ?, decided_at = ? WHERE id = ?",
+      [status, note ?? null, now, id],
+    );
+    return res.affectedRows > 0 ? this.getApproval(id) : undefined;
+  }
+
+  private rowToApproval(r: Record<string, unknown>): ApprovalRequest {
+    const approval: ApprovalRequest = {
+      id: r["id"] as Id,
+      summary: r["summary"] as string,
+      artifactId: (r["artifact_id"] as Id | null) ?? "",
+      channel: "whatsapp",
+      status: r["status"] as ApprovalStatus,
+    };
+    const note = r["note"] as string | null;
+    if (note) approval.note = note;
+    const decidedAt = r["decided_at"];
+    if (decidedAt != null) approval.decidedAt = Number(decidedAt);
+    return approval;
+  }
+
+  // ---------------- Audit log (Phase 4.3) ----------------
+
+  async addAuditEntry(input: NewAuditEntry, now = Date.now()): Promise<AuditEntry> {
+    const id = defaultGenId("aud");
+    await this.run(
+      "INSERT INTO audit_entries (id, company_id, agent_id, action, approval_id, detail, at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        id,
+        input.companyId ?? null,
+        input.agentId,
+        input.action,
+        input.approvalId ?? null,
+        JSON.stringify(input.detail ?? {}),
+        now,
+      ],
+    );
+    return (await this.getAuditEntry(id))!;
+  }
+
+  async getAuditEntry(id: Id): Promise<AuditEntry | undefined> {
+    const row = await this.one("SELECT * FROM audit_entries WHERE id = ?", [id]);
+    return row ? this.rowToAuditEntry(row) : undefined;
+  }
+
+  async listAuditByCompany(companyId: Id): Promise<AuditEntry[]> {
+    const rows = await this.all(
+      "SELECT * FROM audit_entries WHERE company_id = ? ORDER BY at, id",
+      [companyId],
+    );
+    return rows.map((r) => this.rowToAuditEntry(r));
+  }
+
+  /** Hitung audit entry seorang agent untuk action tertentu sejak `sinceMs` (guardrail rate-limit). */
+  async countAuditByAgentSince(agentId: Id, actions: string[], sinceMs: number): Promise<number> {
+    if (actions.length === 0) return 0;
+    const placeholders = actions.map(() => "?").join(", ");
+    const row = await this.one(
+      `SELECT COUNT(*) AS n FROM audit_entries WHERE agent_id = ? AND action IN (${placeholders}) AND at >= ?`,
+      [agentId, ...actions, sinceMs],
+    );
+    return row ? Number(row["n"]) : 0;
+  }
+
+  private rowToAuditEntry(r: Record<string, unknown>): AuditEntry {
+    const entry: AuditEntry = {
+      id: r["id"] as Id,
+      agentId: r["agent_id"] as Id,
+      action: r["action"] as string,
+      at: Number(r["at"]),
+      detail: parseJson<Record<string, unknown>>(r["detail"], {}),
+    };
+    const approvalId = r["approval_id"] as Id | null;
+    if (approvalId) entry.approvalId = approvalId;
+    return entry;
   }
 
   // ---------------- Comms ----------------

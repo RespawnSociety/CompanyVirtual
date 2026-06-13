@@ -27,7 +27,7 @@
 | **1** | Platform Shell + Company Setup | ✅ Codex-reviewed (1.1–1.9); sisa BUG-107/108 + CR-101 (auth) = keputusan owner | Kantor 2D + Company/Dept/Character editor |
 | **2** | Runtime + 1 Agent Nyata | 🟡 implementasi selesai (2.1–2.5 ✓ build/lint/test/smoke) — menunggu Codex 2.6 | Directive → agent kerja → Artifact |
 | **3** | Departemen Lengkap + Workflow Engine | 🟡 implementasi selesai (3.1–3.5 ✓ build/lint/test + smoke LIVE 9Router) — menunggu Codex 3.6 | Pipeline Marketing + Approval Gate |
-| **4** | Aksi Eksternal + Keamanan | ⬜ belum | Publish ke akun test + Vault + audit |
+| **4** | Aksi Eksternal + Keamanan | 🟡 implementasi selesai (4.1–4.4 ✓ build/lint/test 87/87) — menunggu Codex 4.5 | Publish (Playwright/dry-run) + Vault + audit + guardrails + auth boundary |
 | **5** | Platform Generalization | ⬜ belum | ≥2 departemen berjalan stabil |
 | **6** | App Packaging | ⬜ belum | Tauri desktop + web |
 | **7** | Memory Graph per Agent | ⬜ belum | Visualisasi graph memory (ala graphify.net) per karakter |
@@ -119,13 +119,19 @@ Legenda: ⬜ belum · 🟡 jalan · ✅ selesai (DoD lolos + Codex verified)
 
 **Tujuan:** publish nyata ke akun test, aman & ter-audit.
 
-- [ ] **4.1 Credential Vault** — `apps/server/security`: enkripsi (keychain/sops/age), `VaultReader`. Tak ada secret di prompt/log/commit.
-- [ ] **4.2 Skill sosial** — `ig_post`, `twitter_post`, `schedule_post` (API resmi diutamakan, browser Playwright fallback), semua **approval-gated + preview**.
-- [ ] **4.3 Audit log** — `AuditEntry` tiap aksi + approval.
-- [ ] **4.4 Guardrails** — rate limit, jam posting, least-privilege (batasi domain/perintah).
-- [ ] **4.5 Codex review Phase 4** — fokus keamanan: secret handling, semua aksi eksternal lewat approval, audit lengkap.
+> **Keputusan owner (2026-06-13):** skill sosial = **Playwright browser** (jalur posting nyata) dengan
+> default **mock/dry-run** untuk tes/dev; Vault = **encrypted file** (AES-256-GCM) + fallback env;
+> auth boundary (BUG-107/108 + CR-101) **ditutup di fase ini**.
+
+- [x] **4.1 Credential Vault** — `apps/server/src/security/vault.ts`: `FileVault` (AES-256-GCM, master key scrypt dari `VAULT_MASTER_KEY`, file terenkripsi di-gitignore) + `EnvVault` fallback + `LayeredVault`; `createVaultFromEnv` (mode file/env/noop). CLI `npm run vault`. Tak ada secret di prompt/log/commit (nilai tak pernah di-log).
+- [x] **4.2 Skill sosial** — `agent-runtime/src/skills/socialPost.ts`: `ig_post`/`twitter_post`/`schedule_post` (semua `risky`, **approval-gated + preview**). Provider pluggable: `mockPostPublisher` (dry-run default) + `createPlaywrightPostPublisher` (browser nyata, lazy-import, kredensial dari Vault, **domain allowlist** least-privilege). Pilih via `POST_PROVIDER`. `KNOWN_SKILLS.implemented=true`.
+- [x] **4.3 Audit log** — tabel `audit_entries` + `approvals` (persist). `ctx.audit` (kontrak `@vc/shared`) dipanggil skill aksi eksternal; engine mencatat `approval_requested`/`approval_decided`/`publish_authorized`/`publish_blocked`. Endpoint `GET /api/companies/:id/audit`.
+- [x] **4.4 Guardrails** — `apps/server/src/security/guardrails.ts`: `rate_limit` (maxPostsPerDay via hitung audit 24 jam), `posting_hours` (jam lokal, mendukung lewat tengah malam), least-privilege domain (Playwright allowlist). Ditegakkan di engine pra-eksekusi skill `risky` pasca-approval.
+- [x] **Auth boundary (BUG-107/108 + CR-101)** — helper `security/auth.ts` (`hasValidBearer`/`hasValidSocketToken`) dipakai REST (`server.ts`) **dan** Socket.IO (`realtime.ts` `io.use`); web kirim bearer (`VITE_API_AUTH_TOKEN`) di REST + socket handshake.
+- [ ] **4.5 Codex review Phase 4** — fokus keamanan: secret handling, semua aksi eksternal lewat approval, audit lengkap. **(menunggu — Codex CLI belum terpasang; sementara self-review Claude)**
 
 **DoD Fase 4:** konten yang di-approve **terbit di akun test**, dengan audit trail & approval manual.
+**Status Phase 4:** `npm run build` ✅ · `npm run lint` ✅ · `npm run typecheck:web` ✅ · `npm run build:web` ✅ · `npm test` ✅ **87/87** (+ vault, social mock, guardrails, audit/approval store, publish via engine [approve→dry-run + guardrail rate-limit block], auth helper + realtime BUG-108). **Publish "terbit di akun test" butuh setup manual** (`POST_PROVIDER=playwright` + `npx playwright install chromium` + kredensial Vault + selektor UI di `playwrightPublisher.postToPlatform`); default mock = pipeline penuh tanpa terbit nyata. Menunggu Codex 4.5.
 
 ---
 

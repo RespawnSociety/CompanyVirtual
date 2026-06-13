@@ -5,7 +5,6 @@
  * buildServer menerima dependensi (relay, cloud adapter) agar mudah di-test.
  */
 
-import { timingSafeEqual } from "node:crypto";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { Id } from "@vc/shared";
 import type { WaRelay } from "./comms/relay.js";
@@ -14,6 +13,7 @@ import type { ConfigStore } from "./db/store.js";
 import { registerConfigRoutes } from "./api/routes.js";
 import type { DirectiveDispatcher } from "./registry/dispatcher.js";
 import type { WorkflowEngine } from "./workflow/engine.js";
+import { hasValidBearer } from "./security/auth.js";
 
 export interface BuildServerDeps {
   /** Relay WhatsApp (Phase 0). Opsional: server config-only (Phase 1) tak butuh. */
@@ -119,18 +119,6 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
   });
 
   return app;
-}
-
-/** Validasi header `Authorization: Bearer <token>` terhadap token yang dikonfigurasi (CR-101). */
-function hasValidBearer(authHeader: string | undefined, token: string): boolean {
-  if (!authHeader) return false;
-  const prefix = "Bearer ";
-  if (!authHeader.startsWith(prefix)) return false;
-  const provided = authHeader.slice(prefix.length).trim();
-  // Bandingkan waktu-konstan; timingSafeEqual butuh panjang sama, jadi cek panjang dulu.
-  const a = Buffer.from(provided);
-  const b = Buffer.from(token);
-  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 /**

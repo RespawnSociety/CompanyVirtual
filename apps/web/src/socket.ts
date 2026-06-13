@@ -10,6 +10,7 @@ import type {
   ServerToClientEvents,
   WorldSnapshot,
 } from "@vc/shared";
+import { AUTH_TOKEN } from "./api.js";
 
 type WorldSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -30,7 +31,11 @@ export function subscribeWorld(
   },
 ): WorldSubscription {
   // Same-origin (di-proxy Vite ke server). socket.io default path /socket.io.
-  const socket: WorldSocket = io({ autoConnect: true });
+  // BUG-108/CR-101: kirim token via handshake auth bila server dilindungi (sama dgn REST bearer).
+  const socket: WorldSocket = io({
+    autoConnect: true,
+    ...(AUTH_TOKEN ? { auth: { token: AUTH_TOKEN } } : {}),
+  });
 
   socket.on("connect", () => {
     handlers.onConnectChange?.(true);

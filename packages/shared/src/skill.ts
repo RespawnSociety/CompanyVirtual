@@ -5,7 +5,7 @@
  */
 
 import type { EmitFn } from "./events.js";
-import type { ApprovalRequest, Id } from "./types.js";
+import type { ApprovalRequest, AuditEntry, Id } from "./types.js";
 import type { RouterClient } from "./router.js";
 
 /**
@@ -41,6 +41,20 @@ export interface ApprovalDraft {
   artifactId?: Id;
 }
 
+/**
+ * Draft catatan audit yang diajukan skill (Phase 4 §4.3). Skill HANYA mendeskripsikan
+ * aksinya; orchestrator melengkapi `id`, `agentId` (dari `SkillContext.agentId`), `at`,
+ * dan scoping company. Jangan masukkan secret mentah ke `detail` (akan tersimpan & terbaca).
+ */
+export interface AuditDraft {
+  /** Aksi yang dicatat (mis. "ig_post", "twitter_post"). */
+  action: string;
+  /** Approval terkait (bila aksi melewati approval gate). */
+  approvalId?: Id;
+  /** Detail non-sensitif (platform, preview, hasil, dry-run, dll). */
+  detail?: AuditEntry["detail"];
+}
+
 /** Konteks yang di-inject ke tiap pemanggilan skill (plan §3.2). */
 export interface SkillContext {
   agentId: Id;
@@ -49,6 +63,11 @@ export interface SkillContext {
   emit: EmitFn;
   /** Ajukan approval; resolve setelah owner memutuskan (atau pending bila async). */
   requestApproval: (req: ApprovalDraft) => Promise<ApprovalRequest>;
+  /**
+   * Catat aksi ke audit log (Phase 4 §4.3). Dipanggil skill untuk aksi eksternal
+   * (publish, dll). Bila orchestrator tak menyediakan → no-op (skill pakai `?.`).
+   */
+  audit?: (entry: AuditDraft) => Promise<void>;
   /** Sinyal pembatalan agar skill panjang bisa berhenti rapi. */
   signal?: AbortSignal;
 }

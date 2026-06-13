@@ -134,6 +134,13 @@ export function registerConfigRoutes(
     return store.listCommsByCompany(id);
   });
 
+  // Audit log (Phase 4.3) — jejak aksi & approval per company (observability/keamanan).
+  app.get("/api/companies/:id/audit", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!(await store.getCompany(id))) return notFound(reply, `Company tidak ditemukan: ${id}`);
+    return store.listAuditByCompany(id);
+  });
+
   // ---------------- Floor ----------------
 
   app.get("/api/companies/:companyId/floors", async (req, reply) => {

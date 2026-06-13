@@ -15,6 +15,7 @@ import type {
   ServerToClientEvents,
 } from "@vc/shared";
 import type { ConfigStore } from "./db/store.js";
+import { hasValidSocketToken } from "./security/auth.js";
 
 function room(companyId: Id): string {
   return `company:${companyId}`;
@@ -27,8 +28,26 @@ export class RealtimeHub {
     httpServer: HttpServer,
     private readonly store: ConfigStore,
     corsOrigin: string | boolean = true,
+    /** Token bearer wajib bila di-set (BUG-108: tutup celah socket tanpa auth saat REST dilindungi). */
+    apiAuthToken?: string,
   ) {
     this.io = new IoServer(httpServer, { cors: { origin: corsOrigin } });
+
+    // BUG-108/CR-101: bila token di-set, validasi handshake socket SEBELUM connection diterima.
+    // Klien kirim via `auth: { token }` (socket.io-client) atau header Authorization.
+    const token = apiAuthToken?.trim() || undefined;
+    if (token) {
+      this.io.use((socket, next) => {
+        const handshakeToken = (socket.handshake.auth as { token?: unknown } | undefined)?.token;
+        const header = socket.handshake.headers.authorization;
+        if (hasValidSocketToken(handshakeToken, header, token)) {
+          next();
+        } else {
+          next(new Error("unauthorized: token socket tidak valid"));
+        }
+      });
+    }
+
     this.io.on("connection", (socket) => {
       socket.on("world:subscribe", (companyId: Id) => {
         const target = room(companyId);

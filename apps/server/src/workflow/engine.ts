@@ -18,17 +18,28 @@
 import type {
   AgentEvent,
   AgentProfile,
+  ApprovalDraft,
+  ApprovalRequest,
   Department,
   Directive,
   DirectiveSource,
   EmitFn,
   Id,
   RouterClient,
+  SkillContext,
+  VaultReader,
   WorkflowRun,
   WorkflowStep,
 } from "@vc/shared";
-import { defaultGenId, runAgentLoop, type MemoryStore, type SkillRegistry } from "@vc/agent-runtime";
+import {
+  defaultGenId,
+  runAgentLoop,
+  type AgentLoopResult,
+  type MemoryStore,
+  type SkillRegistry,
+} from "@vc/agent-runtime";
 import type { ConfigStore } from "../db/store.js";
+import { EXTERNAL_POST_ACTIONS, RATE_LIMIT_WINDOW_MS, evaluateGuardrails } from "../security/guardrails.js";
 
 export interface WorkflowEngineDeps {
   store: ConfigStore;
@@ -36,6 +47,8 @@ export interface WorkflowEngineDeps {
   skills: SkillRegistry;
   memory: MemoryStore;
   emitAgentEvent: (companyId: Id, event: AgentEvent) => void;
+  /** Vault untuk skill yang butuh kredensial (publish). Default kosong (mock tak butuh). */
+  vault?: VaultReader;
   now?: () => number;
   genId?: (prefix: string) => string;
   /** Maksimum putaran revisi pada loop_until_pass (default 2). */
@@ -126,6 +139,18 @@ export class WorkflowEngine {
     const workflow = await store.getWorkflow(run.workflowId);
     if (!workflow) return undefined;
 
+    const dept = await store.getDepartment(run.departmentId);
+    const companyId = dept?.companyId;
+    // Catat keputusan owner ke approval record + audit (§4.3 — "approval manual" punya bukti).
+    await store.decideApproval(approvalId, decision === "approve" ? "approved" : "rejected", note);
+    await store.addAuditEntry({
+      ...(companyId ? { companyId } : {}),
+      agentId: run.departmentId,
+      action: "approval_decided",
+      approvalId,
+      detail: { decision, ...(note ? { note } : {}) },
+    });
+
     await store.updateDirectiveStatus(run.directiveId, "in_progress");
     const cleared =
       (await store.updateWorkflowRun(run.id, { status: "running", approvalId: null })) ?? run;
@@ -134,9 +159,11 @@ export class WorkflowEngine {
       const idx = workflow.steps.findIndex((s) => s.id === cleared.currentStepId);
       // currentStepId = step SETELAH gate; bila tak ada (gate di akhir) → langsung selesai.
       if (idx < 0) return this.finish(cleared.id, run.directiveId);
-      return this.runFrom(cleared.id, idx, note);
+      // APPROVE = pra-otorisasi segmen pasca-gate: skill `risky` di step publish boleh eksekusi
+      // (owner sudah setuju), TETAP lewat guardrail (§4.4). `grantApprovalId` diteruskan ke step.
+      return this.runFrom(cleared.id, idx, note, approvalId);
     }
-    // revise → ulang dari step konten dengan feedback.
+    // revise → ulang dari step konten dengan feedback (tanpa pra-otorisasi).
     return this.runFrom(cleared.id, contentStepIndex(workflow.steps), note);
   }
 
@@ -146,8 +173,17 @@ export class WorkflowEngine {
     this.deps.emitAgentEvent(companyId, event);
   }
 
-  /** Jalankan pipeline mulai indeks `startIndex`. `note` = feedback (revisi) untuk step pertama. */
-  private async runFrom(runId: Id, startIndex: number, note?: string): Promise<WorkflowRun> {
+  /**
+   * Jalankan pipeline mulai indeks `startIndex`. `note` = feedback (revisi) untuk step pertama.
+   * `grantApprovalId` (bila ada) = segmen ini sudah di-approve owner di gate → skill `risky`
+   * boleh eksekusi (tetap lewat guardrail). Diteruskan ke tiap step sampai gate berikutnya.
+   */
+  private async runFrom(
+    runId: Id,
+    startIndex: number,
+    note?: string,
+    grantApprovalId?: Id,
+  ): Promise<WorkflowRun> {
     const { store } = this.deps;
     const maxReviewRounds = this.deps.maxReviewRounds ?? 2;
     const hardCap = this.deps.maxSteps ?? 24;
@@ -168,10 +204,19 @@ export class WorkflowEngine {
       const step = steps[i]!;
       await store.updateWorkflowRun(run.id, { currentStepId: step.id });
 
-      const out = await this.runStep(dept, step, run, context, pendingNote);
+      const out = await this.runStep(dept, step, run, context, pendingNote, grantApprovalId);
       pendingNote = undefined;
       context.set(step.role, out.finalText);
       run = out.run;
+
+      // Aksi berisiko tertahan (mis. ditolak guardrail §4.4) → hentikan run sebagai blocked.
+      if (out.status === "blocked") {
+        return this.blockRun(
+          run,
+          dept,
+          `step '${step.role}/${step.action}' tertahan (guardrail/approval). ${truncate(out.finalText, 200)}`,
+        );
+      }
 
       // Tentukan langkah berikutnya dari token `next`.
       if (step.next === "approval_gate") {
@@ -215,7 +260,8 @@ export class WorkflowEngine {
     run: WorkflowRun,
     context: Map<string, string>,
     note: string | undefined,
-  ): Promise<{ finalText: string; run: WorkflowRun }> {
+    grantApprovalId: Id | undefined,
+  ): Promise<{ finalText: string; run: WorkflowRun; status: AgentLoopResult["status"] }> {
     const { store } = this.deps;
     const now = this.deps.now ?? Date.now;
     const agent = await this.resolveAgentForRole(dept.id, step.role);
@@ -233,17 +279,36 @@ export class WorkflowEngine {
     const emit: EmitFn = (e) => this.emit(dept.companyId, e);
     const instruction = buildStepInstruction(step, await this.directiveText(run), context, note);
 
+    // Audit aksi skill (§4.3): isi companyId+agentId dari konteks step.
+    const audit: SkillContext["audit"] = async (draft) => {
+      await store.addAuditEntry({
+        companyId: dept.companyId,
+        agentId: agent.id,
+        action: draft.action,
+        ...(draft.approvalId ? { approvalId: draft.approvalId } : {}),
+        ...(draft.detail ? { detail: draft.detail } : {}),
+      });
+    };
+
     let finalText = "";
+    let status: AgentLoopResult["status"] = "done";
     try {
       const result = await runAgentLoop(agent, instruction, {
         router: this.deps.router,
         skills: this.deps.skills,
         memory: this.deps.memory,
         emit,
+        audit,
+        // Pra-otorisasi (§4.4): hanya bila segmen ini sudah di-approve owner di gate.
+        ...(grantApprovalId
+          ? { requestApproval: this.makeGuardedApproval(agent, dept, grantApprovalId) }
+          : {}),
+        ...(this.deps.vault ? { vault: this.deps.vault } : {}),
         ...(this.deps.now ? { now: this.deps.now } : {}),
         ...(this.deps.genId ? { genId: this.deps.genId } : {}),
       });
       finalText = result.finalText ?? "";
+      status = result.status;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       await store.updateTask(task.id, { status: "blocked" });
@@ -257,13 +322,67 @@ export class WorkflowEngine {
       content: finalText,
       meta: { role: step.role, stepId: step.id, directiveId: run.directiveId },
     });
+    const taskStatus = status === "blocked" ? "blocked" : "done";
     const doneTask =
-      (await store.updateTask(task.id, { status: "done", outputRef: artifact.id })) ?? task;
+      (await store.updateTask(task.id, { status: taskStatus, outputRef: artifact.id })) ?? task;
     const nextArtifacts = { ...run.stepArtifacts, [step.id]: artifact.id };
     const updatedRun = (await store.updateWorkflowRun(run.id, { stepArtifacts: nextArtifacts })) ?? run;
     // BUG-110: event POST-persist.
-    emit({ type: "task_update", agentId: agent.id, at: now(), taskId: doneTask.id, status: "done" });
-    return { finalText, run: updatedRun };
+    emit({ type: "task_update", agentId: agent.id, at: now(), taskId: doneTask.id, status: taskStatus });
+    return { finalText, run: updatedRun, status };
+  }
+
+  /**
+   * Penengah approval untuk segmen pasca-gate (owner sudah APPROVE). Skill `risky` boleh
+   * eksekusi TAPI wajib lolos guardrail (§4.4: rate limit, jam posting). Tiap keputusan diaudit.
+   */
+  private makeGuardedApproval(
+    agent: AgentProfile,
+    dept: Department,
+    approvalId: Id,
+  ): SkillContext["requestApproval"] {
+    const { store } = this.deps;
+    const now = this.deps.now ?? Date.now;
+    return async (draft: ApprovalDraft): Promise<ApprovalRequest> => {
+      const at = now();
+      const recentPostCount = await store.countAuditByAgentSince(
+        agent.id,
+        [...EXTERNAL_POST_ACTIONS],
+        at - RATE_LIMIT_WINDOW_MS,
+      );
+      const verdict = evaluateGuardrails(agent, { now: at, recentPostCount });
+      const base = {
+        id: approvalId,
+        summary: draft.summary,
+        artifactId: draft.artifactId ?? approvalId,
+        channel: "whatsapp" as const,
+      };
+      if (!verdict.ok) {
+        await store.addAuditEntry({
+          companyId: dept.companyId,
+          agentId: agent.id,
+          action: "publish_blocked",
+          approvalId,
+          detail: { reason: verdict.reason ?? "guardrail", summary: draft.summary },
+        });
+        this.emit(dept.companyId, {
+          type: "message",
+          agentId: dept.id,
+          at,
+          to: "user",
+          text: `Publikasi ditahan guardrail: ${verdict.reason ?? "tidak diizinkan"}.`,
+        });
+        return { ...base, status: "rejected", note: verdict.reason ?? "guardrail" };
+      }
+      await store.addAuditEntry({
+        companyId: dept.companyId,
+        agentId: agent.id,
+        action: "publish_authorized",
+        approvalId,
+        detail: { summary: draft.summary },
+      });
+      return { ...base, status: "approved" };
+    };
   }
 
   private async pauseForApproval(
@@ -288,6 +407,16 @@ export class WorkflowEngine {
         ...(nextStep ? { currentStepId: nextStep.id } : { currentStepId: null }),
       })) ?? run;
     await store.updateDirectiveStatus(run.directiveId, "awaiting_approval");
+
+    // §4.3: persist ApprovalRequest (status pending) + audit, agar keputusan punya jejak.
+    await store.createApproval({ id: approvalId, companyId: dept.companyId, summary });
+    await store.addAuditEntry({
+      companyId: dept.companyId,
+      agentId: dept.id,
+      action: "approval_requested",
+      approvalId,
+      detail: { summary },
+    });
 
     const at = now();
     this.emit(dept.companyId, {

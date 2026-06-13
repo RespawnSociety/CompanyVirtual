@@ -17,3 +17,21 @@ export { createMarketResearchSkill } from "./marketResearch.js";
 export type { MarketResearchInput, MarketResearchOutput } from "./marketResearch.js";
 export { createWebFetchSkill, mockWebFetchProvider } from "./webFetch.js";
 export type { WebFetchInput, WebFetchOutput, WebFetchProvider } from "./webFetch.js";
+export {
+  createIgPostSkill,
+  createTwitterPostSkill,
+  createSchedulePostSkill,
+  mockPostPublisher,
+} from "./socialPost.js";
+export type {
+  SocialPlatform,
+  SocialPostResult,
+  PostPublisher,
+  PublishRequest,
+  PublishContext,
+} from "./socialPost.js";
+export {
+  createPlaywrightPostPublisher,
+  createPostPublisherFromEnv,
+} from "./playwrightPublisher.js";
+export type { PostProviderMode, PlaywrightPublisherOptions } from "./playwrightPublisher.js";

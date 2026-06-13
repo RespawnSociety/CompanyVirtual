@@ -19,6 +19,8 @@ export type {
   NewTask,
   NewArtifact,
   NewWorkflowRun,
+  NewApproval,
+  NewAuditEntry,
 } from "./db/store.js";
 export { MysqlMemoryStore } from "./db/memoryStore.js";
 export { registerConfigRoutes } from "./api/routes.js";
@@ -44,3 +46,23 @@ export type {
   StartWorkflowResult,
   ApprovalDecision,
 } from "./workflow/engine.js";
+
+// Security (Phase 4): Vault, guardrails, auth helper
+export {
+  FileVault,
+  EnvVault,
+  LayeredVault,
+  NOOP_VAULT,
+  createVaultFromEnv,
+  envVarNameForKey,
+} from "./security/vault.js";
+export type { WritableVault, VaultMode } from "./security/vault.js";
+export {
+  EXTERNAL_POST_ACTIONS,
+  RATE_LIMIT_WINDOW_MS,
+  checkPostingHours,
+  checkRateLimit,
+  evaluateGuardrails,
+} from "./security/guardrails.js";
+export type { GuardrailVerdict, EvaluateContext } from "./security/guardrails.js";
+export { hasValidBearer, hasValidSocketToken, safeEqual } from "./security/auth.js";

@@ -9,7 +9,7 @@
  * Jalankan: `npm run -w @vc/server dev`.
  */
 
-import type { Id, VaultReader } from "@vc/shared";
+import type { Id } from "@vc/shared";
 import {
   SkillRegistry,
   createRouterFromEnv,
@@ -18,6 +18,10 @@ import {
   createReviewContentSkill,
   createMarketResearchSkill,
   createWebFetchSkill,
+  createIgPostSkill,
+  createTwitterPostSkill,
+  createSchedulePostSkill,
+  createPostPublisherFromEnv,
 } from "@vc/agent-runtime";
 import { CloudApiAdapter } from "./comms/cloudAdapter.js";
 import { MockWhatsAppAdapter } from "./comms/mockAdapter.js";
@@ -30,12 +34,7 @@ import { DirectiveDispatcher } from "./registry/dispatcher.js";
 import { WorkflowEngine } from "./workflow/engine.js";
 import { RealtimeHub } from "./realtime.js";
 import { buildServer } from "./server.js";
-
-// Vault placeholder (Vault asli = Phase 4). Tidak menyimpan secret apa pun.
-const NOOP_VAULT: VaultReader = {
-  get: () => Promise.resolve(undefined),
-  has: () => Promise.resolve(false),
-};
+import { createVaultFromEnv } from "./security/vault.js";
 
 function tryLoadEnvFile(): void {
   // Node >=20.12 punya process.loadEnvFile; muat .env bila ada (abaikan bila tidak).
@@ -68,14 +67,23 @@ async function main(): Promise<void> {
       `WEB_SEARCH_MODE='${searchMode}' belum didukung (provider nyata = Phase 4+). Pakai 'mock' atau biarkan kosong.`,
     );
   }
+  // Phase 4.2: publisher sosial via env (default mock/dry-run; POST_PROVIDER=playwright = nyata).
+  const postPublisher = createPostPublisherFromEnv(env);
+  const postProvider = (env.POST_PROVIDER?.trim().toLowerCase() || "mock");
   const skills = new SkillRegistry().registerAll([
     createWebSearchSkill(),
     createWriteContentSkill(),
     createReviewContentSkill(),
     createMarketResearchSkill(),
     createWebFetchSkill(),
+    createIgPostSkill(postPublisher),
+    createTwitterPostSkill(postPublisher),
+    createSchedulePostSkill(postPublisher),
   ]);
   const router = createRouterFromEnv(env);
+
+  // Phase 4.1: Credential Vault (brankas terenkripsi + fallback env). Skill publish baca kredensial dari sini.
+  const vault = await createVaultFromEnv(env);
 
   // Configuration layer + runtime persistence (MySQL/MariaDB).
   const dbConfig = mysqlConfigFromEnv(env);
@@ -96,7 +104,7 @@ async function main(): Promise<void> {
     router,
     skills,
     memory,
-    vault: NOOP_VAULT,
+    vault,
     emit: (e) => console.log(`[event] ${e.type} agent=${e.agentId}`),
   });
 
@@ -138,9 +146,9 @@ async function main(): Promise<void> {
   const emitAgentEvent = (companyId: Id, event: Parameters<RealtimeHub["emitAgentEvent"]>[1]): void => {
     realtimeRef.hub?.emitAgentEvent(companyId, event);
   };
-  const dispatcher = new DirectiveDispatcher({ store, router, skills, memory, emitAgentEvent });
-  // Workflow engine (Phase 3): pipeline departemen + approval gate.
-  const workflowEngine = new WorkflowEngine({ store, router, skills, memory, emitAgentEvent });
+  const dispatcher = new DirectiveDispatcher({ store, router, skills, memory, emitAgentEvent, vault });
+  // Workflow engine (Phase 3 + 4): pipeline departemen + approval gate + guardrail publish.
+  const workflowEngine = new WorkflowEngine({ store, router, skills, memory, emitAgentEvent, vault });
 
   const host = env.SERVER_HOST ?? "127.0.0.1";
   const port = Number(env.SERVER_PORT ?? 8787);
@@ -172,13 +180,22 @@ async function main(): Promise<void> {
   });
 
   // CR-108: buat hub SEBELUM listen agar tidak ada celah mutasi → broadcast no-op.
-  realtimeRef.hub = new RealtimeHub(app.server, store, env.WEB_ORIGIN ?? true);
+  // BUG-108: teruskan token agar socket realtime ikut terlindungi saat REST dilindungi.
+  realtimeRef.hub = new RealtimeHub(app.server, store, env.WEB_ORIGIN ?? true, apiAuthToken);
 
   await app.listen({ host, port });
   console.log(`[server] listening http://${host}:${port}`);
+  const vaultMode = env.VAULT_MODE?.trim().toLowerCase() || "file";
   console.log(
-    `[server] adapter=${adapterMode} owners=${ownerAuth.size} db=mysql:${dbConfig.database} apiAuth=${apiAuthToken ? "on" : "off"}`,
+    `[server] adapter=${adapterMode} owners=${ownerAuth.size} db=mysql:${dbConfig.database} ` +
+      `apiAuth=${apiAuthToken ? "on" : "off"} post=${postProvider} vault=${vaultMode}`,
   );
+  if (postProvider !== "mock") {
+    console.warn(
+      "[server] POST_PROVIDER=playwright: publish akan diotomasi browser (butuh playwright + kredensial Vault). " +
+        "Semua publish tetap lewat approval gate + guardrail.",
+    );
+  }
   console.log(`[server] webhook: ${host}:${port}/webhook/whatsapp`);
   console.log(`[server] REST config: ${host}:${port}/api/*  · realtime: socket.io`);
   if (adapterMode === "mock") {

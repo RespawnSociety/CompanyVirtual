@@ -34,6 +34,8 @@ export interface RunAgentLoopDeps {
   emit?: EmitFn;
   /** Penengah approval untuk aksi berisiko. Tanpa ini, aksi berisiko → blocked. */
   requestApproval?: SkillContext["requestApproval"];
+  /** Penulis audit (Phase 4.3) untuk aksi skill (publish, dll). Tanpa ini → no-op. */
+  audit?: SkillContext["audit"];
   now?: () => number;
   genId?: (prefix: string) => string;
   /** Batas iterasi think→act. Default 6. */
@@ -104,6 +106,7 @@ export async function runAgentLoop(
       vault,
       emit,
       requestApproval: deps.requestApproval ?? defaultDenyApproval(genId),
+      ...(deps.audit ? { audit: deps.audit } : {}),
       ...(deps.signal ? { signal: deps.signal } : {}),
     };
 

@@ -19,7 +19,9 @@ import type {
   EmitFn,
   Id,
   RouterClient,
+  SkillContext,
   Task,
+  VaultReader,
 } from "@vc/shared";
 import {
   runAgentLoop,
@@ -36,6 +38,8 @@ export interface DispatcherDeps {
   memory: MemoryStore;
   /** Teruskan event agent ke RealtimeHub (animasi). */
   emitAgentEvent: (companyId: Id, event: AgentEvent) => void;
+  /** Vault untuk skill yang butuh kredensial. Default kosong. */
+  vault?: VaultReader;
   now?: () => number;
   genId?: (prefix: string) => string;
   maxSteps?: number;
@@ -112,6 +116,17 @@ export class DirectiveDispatcher {
     const emitTaskUpdate = (t: Task): void =>
       emit({ type: "task_update", agentId: agent.id, at: now(), taskId: t.id, status: t.status });
 
+    // Audit aksi skill (§4.3): isi companyId+agentId dari konteks dispatch.
+    const audit: SkillContext["audit"] = async (draft) => {
+      await store.addAuditEntry({
+        companyId,
+        agentId: agent.id,
+        action: draft.action,
+        ...(draft.approvalId ? { approvalId: draft.approvalId } : {}),
+        ...(draft.detail ? { detail: draft.detail } : {}),
+      });
+    };
+
     let result: AgentLoopResult;
     try {
       result = await runAgentLoop(agent, directive.text, {
@@ -119,6 +134,8 @@ export class DirectiveDispatcher {
         skills: this.deps.skills,
         memory: this.deps.memory,
         emit,
+        audit,
+        ...(this.deps.vault ? { vault: this.deps.vault } : {}),
         ...(this.deps.now ? { now: this.deps.now } : {}),
         ...(this.deps.genId ? { genId: this.deps.genId } : {}),
         ...(this.deps.maxSteps !== undefined ? { maxSteps: this.deps.maxSteps } : {}),

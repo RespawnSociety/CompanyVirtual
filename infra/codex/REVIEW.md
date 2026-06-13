@@ -82,3 +82,27 @@ Untuk tiap entri `BUGLIST` ber-status `FIXED`, baca kode terbaru di lokasinya:
 
 **Observasi (bukti verifikasi #2):** `npm test` (butuh MySQL hidup; DB test `virtual_company_test`),
 `npm run build`, `npm run lint`, `npm run typecheck:web`. Smoke server: lihat `docs/RUNBOOK.md` (Phase 2).
+
+---
+
+## Fokus review Phase 4 (aksi eksternal + keamanan) — untuk 4.5
+
+> Cakupan tambahan: `apps/server/src/security/{vault,guardrails,auth}.ts`, `apps/server/src/db/{schema,store}.ts`
+> (tabel `approvals`/`audit_entries` + method baru), `apps/server/src/workflow/engine.ts` (publish segment +
+> `makeGuardedApproval` + persist approval), `packages/agent-runtime/src/skills/{socialPost,playwrightPublisher}.ts`,
+> `packages/shared/src/skill.ts` (`AuditDraft`/`SkillContext.audit`), `apps/web/src/{api,socket}.ts`, `apps/server/src/realtime.ts`.
+
+**Fokus verifikasi 2x (utamakan keamanan):**
+1. **Vault**: nilai secret TIDAK pernah masuk log/prompt/audit `detail`; file `data/vault.enc` benar-benar
+   terenkripsi (bukan plaintext); master key salah → gagal (auth tag). Cek `summarizeArgs`/audit tak membocorkan kredensial.
+2. **Approval gate tak bisa di-bypass**: skill `risky` HANYA eksekusi di segmen pasca-`approval_gate`
+   (`grantApprovalId`); tanpa grant → default-deny (blocked). Tak ada jalur publish yang lewat tanpa approval.
+3. **Guardrails benar**: rate_limit menghitung audit 24 jam (action publish), posting_hours jam lokal
+   (termasuk lewat tengah malam); gagal guardrail → run `blocked` + audit `publish_blocked` (tak diam-diam terbit).
+4. **Least-privilege Playwright**: domain allowlist menahan navigasi luar; kredensial dari Vault; lazy-import aman.
+5. **Audit lengkap**: setiap aksi eksternal + keputusan approval tercatat (`approval_requested`/`approval_decided`/
+   `publish_authorized`/`publish_blocked`/`<skill>`); scoping per company benar.
+6. **Auth boundary (BUG-107/108/CR-101)**: REST + Socket pakai helper sama; web kirim token di kedua jalur;
+   socket tanpa token ditolak saat token aktif; perbandingan waktu-konstan.
+
+**Observasi:** `npm test` **87 passed** (`tests/{vault,social,guardrails,audit,publish,auth}.test.ts`), build/lint/typecheck:web/build:web hijau.
