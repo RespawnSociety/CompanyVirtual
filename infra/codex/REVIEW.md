@@ -106,3 +106,33 @@ Untuk tiap entri `BUGLIST` ber-status `FIXED`, baca kode terbaru di lokasinya:
    socket tanpa token ditolak saat token aktif; perbandingan waktu-konstan.
 
 **Observasi:** `npm test` **87 passed** (`tests/{vault,social,guardrails,audit,publish,auth}.test.ts`), build/lint/typecheck:web/build:web hijau.
+
+---
+
+## Fokus review Phase 5 (generalisasi platform) — untuk 5.6 (`npm run review:codex:p5`)
+
+> Cakupan tambahan: `packages/templates/src/sales.ts`, `packages/agent-runtime/src/skills/sendOutreach.ts`,
+> `apps/server/src/kpi/{kpi,recordUsage}.ts`, `apps/server/src/config/costRates.ts`,
+> `packages/agent-runtime/src/loop.ts` (akumulasi `usage`), `packages/agent-runtime/src/router/{throttle,nineRouter}.ts`
+> (throttle + tier cooldown), `apps/server/src/db/{schema,store}.ts` (`usage_events`), `apps/server/src/api/routes.ts`
+> (`GET /api/companies/:id/kpi`), `apps/web/src/game/{OfficeScene,maps}.ts` (multi-floor), `apps/web/src/components/KpiDashboard.tsx`.
+
+**Fokus verifikasi 2x:**
+1. **Engine tetap data-driven (KRITIS):** tak ada hardcode "sales"/"marketing" di `apps/server/src/workflow/engine.ts`;
+   Sales jalan via `WorkflowDef` (token `loop_until_pass`/`approval_gate` sama). **Nol regresi Marketing** saat ada dept ke-2.
+2. **`send_outreach`** `risky` → approval-gated; channel di luar allowlist DITOLAK (tak diam-diam jadi email);
+   provider `ok:false`/throw → audit `send_outreach_failed` + run `blocked` (bukan `done`); audit tanpa secret.
+   **VERIFIKASI entri FIXED: BUG-116 & BUG-117** → set `VERIFIED_FIXED` atau `REOPENED` dgn bukti.
+3. **KPI biaya benar:** token dari `usage_events` (nyata, dari 9Router `usage`); agregasi per company/dept/tier/hari
+   konsisten; biaya = token × tarif per-tier (`COST_*`, subscription default 0); atribusi audit→dept benar;
+   `computeKpi` HANYA baca DB (tak ada panggilan LLM saat render KPI).
+4. **Pencatatan usage:** dispatcher & engine merekam usage tiap loop tanpa menggagalkan kerja (fire-and-forget
+   aman); tak ada double-count; loop yang gagal tak menulis usage palsu.
+5. **Optimasi router:** throttle FIFO tak mengubah hasil & tak deadlock; tier cooldown tak pernah mengosongkan
+   seluruh kandidat (fallback tetap jalan); default tetap aman.
+6. **Multi-floor:** swap map runtime mem-`destroy` layer/tilemap lama (tak bocor); grid pathfinding dibangun ulang;
+   `mapKey` tak dikenal → fallback default; karakter difilter per lantai.
+7. **VERIFIKASI CR-110** (throttle escape-hatch, `ADDRESSED`) → `VERIFIED` atau beri temuan.
+
+**Observasi:** `npm test` **104 passed** (`tests/{sales,throttle,kpi,loop}.test.ts` dll), build/lint/typecheck:web/build:web hijau.
+Catatan infra: tiap FILE test kini pakai database sendiri (`virtual_company_test_<file>`) — bukan bug, perbaikan flakiness.
