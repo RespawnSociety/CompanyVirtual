@@ -275,11 +275,11 @@ button.danger {
   border-radius: 8px;
   overflow: hidden;
   background: #000;
-  /* Phaser (mode FIT) menskala/upscale canvas ke kotak ini; rasio 640:448 (20×14 petak @32px).
-   * Lebar mengikuti kolom (sampai 1200px) → game tampil jauh lebih besar mengisi layar. */
+  /* Phaser (mode FIT) menskala canvas ke kotak ini; rasio 1152:704 (board isometrik, Phase 6).
+   * Lebar mengikuti kolom (sampai 1200px) → game tampil besar mengisi layar tanpa letterbox. */
   width: 100%;
   max-width: 1200px;
-  aspect-ratio: 640 / 448;
+  aspect-ratio: 1152 / 704;
 }
 
 .hint {

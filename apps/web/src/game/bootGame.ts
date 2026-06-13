@@ -10,10 +10,11 @@
 
 import Phaser from "phaser";
 import { OfficeScene } from "./OfficeScene.js";
-import { TILE } from "./sprites.js";
 
-const MAP_W = 20;
-const MAP_H = 14;
+// Resolusi dasar (render) — diperbesar untuk menampung board ISOMETRIK 20×14 (Phase 6).
+// Canvas di-skala FIT ke kontainer (lihat styles.css #game-host aspect-ratio sama).
+const BASE_W = 1152;
+const BASE_H = 704;
 
 export interface GameHandle {
   game: Phaser.Game;
@@ -26,8 +27,8 @@ export function bootGame(parent: HTMLElement): GameHandle {
   const game = new Phaser.Game({
     type: Phaser.AUTO,
     parent,
-    width: MAP_W * TILE.WIDTH,
-    height: MAP_H * TILE.HEIGHT,
+    width: BASE_W,
+    height: BASE_H,
     backgroundColor: "#0f1420",
     pixelArt: true,
     // Phase 6.2: skala canvas mengikuti ukuran kontainer (responsif) sambil menjaga rasio.
