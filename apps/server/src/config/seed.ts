@@ -61,21 +61,21 @@ function deskLayout(deptIndexOnFloor: number, roleIndex: number): { x: number; y
   return { x: 3 + roleIndex * 2, y: 4 + deptIndexOnFloor * 3 };
 }
 
-export function seedDepartmentFromTemplate(
+export async function seedDepartmentFromTemplate(
   store: ConfigStore,
   input: SeedDepartmentInput,
   now = Date.now(),
-): SeededDepartment {
+): Promise<SeededDepartment> {
   const { companyId, floorId, template } = input;
 
   // Baris ke berapa di lantai ini (untuk tata letak meja non-tumpang-tindih).
-  const deptIndexOnFloor = store.listDepartmentsByFloor(floorId).length;
+  const deptIndexOnFloor = (await store.listDepartmentsByFloor(floorId)).length;
 
   // 1) Clone & simpan workflow default template.
-  const workflow = store.upsertWorkflow(cloneWorkflowDef(template.defaultWorkflow));
+  const workflow = await store.upsertWorkflow(cloneWorkflowDef(template.defaultWorkflow));
 
   // 2) Buat department (menunjuk template asal + workflow hasil clone).
-  const department = store.createDepartment(
+  const department = await store.createDepartment(
     companyId,
     floorId,
     {
@@ -88,24 +88,28 @@ export function seedDepartmentFromTemplate(
     now,
   );
 
-  // 3) Buat satu AgentProfile per role template.
+  // 3) Buat satu AgentProfile per role template (berurutan agar created_at = now+i stabil).
   // `now + i` agar created_at tiap agent berbeda → urutan agentIds deterministik
   // (sesuai urutan role di template), bukan acak karena tie-break pada id.
-  const agents = template.roleTemplates.map((role, i) =>
-    store.createAgent(
-      department.id,
-      {
-        name: role.role,
-        role: role.role,
-        deskPos: deskLayout(deptIndexOnFloor, i),
-        spriteKey: role.spriteKey ?? "default",
-        description: role.description,
-        skillScope: [...role.skillScope],
-        guardrails: role.guardrails.map((g) => ({ ...g })),
-      },
-      now + i,
-    ),
-  );
+  const agents = [];
+  for (let i = 0; i < template.roleTemplates.length; i++) {
+    const role = template.roleTemplates[i]!;
+    agents.push(
+      await store.createAgent(
+        department.id,
+        {
+          name: role.role,
+          role: role.role,
+          deskPos: deskLayout(deptIndexOnFloor, i),
+          spriteKey: role.spriteKey ?? "default",
+          description: role.description,
+          skillScope: [...role.skillScope],
+          guardrails: role.guardrails.map((g) => ({ ...g })),
+        },
+        now + i,
+      ),
+    );
+  }
 
   return { department, workflow, agents };
 }

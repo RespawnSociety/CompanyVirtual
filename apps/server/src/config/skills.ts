@@ -20,7 +20,7 @@ export const KNOWN_SKILLS: readonly SkillCatalogEntry[] = [
   { name: "web_fetch", description: "Ambil & baca isi sebuah URL.", implemented: false, risky: false },
   { name: "browser_do", description: "Kendalikan browser untuk riset/aksi.", implemented: false, risky: false },
   { name: "market_research", description: "Riset tren/kompetitor/audiens/keyword.", implemented: false, risky: false },
-  { name: "write_content", description: "Tulis konten (caption, script, thread, CTA).", implemented: false, risky: false },
+  { name: "write_content", description: "Tulis konten (caption, script, thread, CTA).", implemented: true, risky: false },
   { name: "review_content", description: "Review kualitas, brand voice, kepatuhan.", implemented: false, risky: false },
   { name: "message_agent", description: "Kirim pesan/delegasi ke agent lain.", implemented: false, risky: false },
   { name: "ask_user", description: "Tanya/klarifikasi ke owner via WhatsApp.", implemented: false, risky: false },

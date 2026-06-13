@@ -146,6 +146,34 @@ Jalur HTTP/Cloud nyata: jalankan server lalu daftarkan webhook (lihat RUNBOOK).
 - **Owner-auth & approval gate tidak tersentuh** Phase 1 (tetap dari Phase 0); REST config belum punya
   auth (lokal-only) — **TODO** sebelum expose ke jaringan.
 
+## Phase 2 — keputusan teknis (runtime + 1 agent nyata)
+
+- **DB pindah ke MySQL/MariaDB (XAMPP), full switch (2026-06-13).** Keputusan owner: pakai MySQL yang
+  sudah jalan. Konsekuensi: `node:sqlite` (sinkron) → `mysql2/promise` (**async**) → seluruh
+  `ConfigStore` + caller (routes, seed, realtime, dispatch) jadi async. Isolasi tetap di
+  `apps/server/src/db/` (`store.ts` async + `schema.ts` DDL MariaDB + `memoryStore.ts`). `ConfigStore.create()`
+  factory (async) membangun pool + `init()` (CREATE TABLE IF NOT EXISTS). Dialek: VARCHAR id, BIGINT epoch,
+  DOUBLE skor, LONGTEXT JSON; index inline (MariaDB 10.4 tak dukung `CREATE INDEX IF NOT EXISTS`); upsert
+  `ON DUPLICATE KEY UPDATE`; kolom `text` di-backtick. **Trade-off:** `npm test` (db/seed/configApi/dispatch)
+  kini butuh MySQL hidup (DB test `virtual_company_test`, di-TRUNCATE antar-test; `fileParallelism:false`
+  agar file test tak saling clobber). Catatan: plan §10 menyebut jalur Postgres; MySQL dipilih owner untuk
+  testing — migrasi/penyamaan DB target bisa ditinjau ulang nanti.
+- **Registry karakter↔agent = `DirectiveDispatcher`.** Tak ada cache instance agent; profil di-resolve
+  fresh dari ConfigStore tiap dispatch (edit Character Editor langsung berlaku, tak ada state basi).
+  Loop tetap generik (`runAgentLoop`), tak tahu departemen/role.
+- **Directive dispatch = ack-cepat + background** (pola sama BUG-001): `POST /api/agents/:id/directives`
+  balas **202** setelah Directive+Task dibuat; loop jalan di latar belakang, emit `agent:event`. Hasil final
+  → `Artifact` (kind `content`), Task `done`+`outputRef`, Directive `done`. Blocked (risky) → `awaiting_approval`
+  (alur approve = Phase 3). Error router → Task `blocked`.
+- **Skill `write_content` memanggil LLM via `ctx.router`** (9Router) — pemisahan planner (loop) vs generator
+  (skill). Non-risky (tak publish). Publish tetap skill terpisah approval-gated (Phase 4).
+- **Animasi (2.4) murni event-driven**, TANPA panggilan LLM per-tick (fokus review 2.6): `agent:event`
+  (status) → `OfficeScene.setAgentStatus` (titik status + denyut saat working). Snapshot `world:sync` TIDAK
+  menimpa status live (dispatcher tak menyimpan `agent.status` ke DB; status visual hanya dari event).
+- **Memory persisten (2.5) = `MysqlMemoryStore`** (implements `MemoryStore` dari agent-runtime; berbagi pool
+  via `ConfigStore.createMemoryStore()`). Skor retrieval (recency+relevance+importance) identik dgn InMemory.
+  Embeddings = Phase 7 (memory graph).
+
 ## Kontrak yang dikunci di Phase 0
 
 - **`@vc/shared`** — sumber kebenaran tipe: data model (plan §9), `AgentEvent`, kontrak

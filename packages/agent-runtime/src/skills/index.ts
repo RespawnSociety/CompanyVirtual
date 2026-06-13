@@ -9,3 +9,5 @@ export type {
   WebSearchResult,
   WebSearchProvider,
 } from "./webSearch.js";
+export { createWriteContentSkill } from "./writeContent.js";
+export type { WriteContentInput, WriteContentOutput } from "./writeContent.js";

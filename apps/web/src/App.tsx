@@ -4,7 +4,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import type { Company, DepartmentTemplate, WorldSnapshot } from "@vc/shared";
+import type { AgentEvent, Company, DepartmentTemplate, WorldSnapshot } from "@vc/shared";
 import { api, type SkillCatalogEntry } from "./api.js";
 import { subscribeWorld } from "./socket.js";
 import { WorldView } from "./components/WorldView.js";
@@ -37,6 +37,9 @@ export function App(): JSX.Element {
   const [world, setWorld] = useState<WorldSnapshot | null>(null);
   const [connected, setConnected] = useState(false);
   const [tab, setTab] = useState<Tab>("world");
+  // Phase 2: event agent terbaru (untuk animasi) + tick untuk memicu refetch Task Board.
+  const [lastEvent, setLastEvent] = useState<AgentEvent | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
 
   // Katalog statis (template & skill) sekali di awal.
   useEffect(() => {
@@ -94,6 +97,13 @@ export function App(): JSX.Element {
     const sub = subscribeWorld(companyId, {
       onSync: setWorld,
       onConnectChange: setConnected,
+      onAgentEvent: (e) => {
+        setLastEvent(e);
+        // Status/akhir-skill/pesan → kemungkinan task/artifact berubah → refetch Task Board.
+        if (e.type === "status" || e.type === "skill_end" || e.type === "message") {
+          setRefreshTick((t) => t + 1);
+        }
+      },
     });
     return () => sub.disconnect();
   }, [companyId]);
@@ -154,7 +164,13 @@ export function App(): JSX.Element {
       </div>
 
       <div className="content">
-        {tab === "world" && <WorldView world={world} />}
+        {tab === "world" && (
+          <WorldView
+            world={world}
+            agentEvent={lastEvent}
+            onDirectiveSent={() => setRefreshTick((t) => t + 1)}
+          />
+        )}
         {tab === "company" && (
           <CompanySetup
             companies={companies}
@@ -170,7 +186,7 @@ export function App(): JSX.Element {
         {tab === "characters" && (
           <CharacterEditor world={world} skills={skills} reload={reload} />
         )}
-        {tab === "tasks" && <TaskBoard companyId={companyId} />}
+        {tab === "tasks" && <TaskBoard companyId={companyId} refreshTick={refreshTick} world={world} />}
         {tab === "comms" && <CommsViewer companyId={companyId} />}
       </div>
     </div>

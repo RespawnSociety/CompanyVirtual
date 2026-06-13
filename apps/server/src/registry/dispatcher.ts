@@ -1,0 +1,161 @@
+/**
+ * DirectiveDispatcher (Phase 2.1 + 2.3) — jembatan Configuration layer ↔ Agent Runtime.
+ *
+ * Inilah "registry karakter↔agent": ia me-resolve `AgentProfile` (dari ConfigStore, sumber
+ * kebenaran — selalu fresh agar edit Character Editor langsung berlaku, tanpa cache basi),
+ * lalu menjalankan agent loop generik (`runAgentLoop`) untuk arahan tertentu.
+ *
+ * Alur (2.3): directive → buat Directive + Task → jalankan loop (latar belakang, emit
+ * `agent:event` untuk animasi 2.4) → hasil final disimpan jadi Artifact, status Task/Directive
+ * diperbarui. Semua LLM lewat `router` (→ 9Router); memory lewat MemoryStore persisten (2.5).
+ */
+
+import type {
+  AgentEvent,
+  AgentProfile,
+  Artifact,
+  Directive,
+  DirectiveSource,
+  EmitFn,
+  Id,
+  RouterClient,
+  Task,
+} from "@vc/shared";
+import {
+  runAgentLoop,
+  type AgentLoopResult,
+  type MemoryStore,
+  type SkillRegistry,
+} from "@vc/agent-runtime";
+import type { ConfigStore } from "../db/store.js";
+
+export interface DispatcherDeps {
+  store: ConfigStore;
+  router: RouterClient;
+  skills: SkillRegistry;
+  memory: MemoryStore;
+  /** Teruskan event agent ke RealtimeHub (animasi). */
+  emitAgentEvent: (companyId: Id, event: AgentEvent) => void;
+  now?: () => number;
+  genId?: (prefix: string) => string;
+  maxSteps?: number;
+}
+
+/** Hasil akhir setelah loop + persist selesai. */
+export interface DispatchOutcome {
+  status: AgentLoopResult["status"] | "error";
+  finalText: string | null;
+  task: Task;
+  artifact?: Artifact;
+  error?: string;
+}
+
+/** Dikembalikan segera setelah Directive+Task dibuat; `done` resolve saat loop selesai. */
+export interface DispatchResult {
+  companyId: Id;
+  directive: Directive;
+  task: Task;
+  done: Promise<DispatchOutcome>;
+}
+
+export class DirectiveDispatcher {
+  constructor(private readonly deps: DispatcherDeps) {}
+
+  /**
+   * Kirim arahan ke SATU agent (karakter). Membuat Directive + Task (status in_progress),
+   * lalu menjalankan loop di latar belakang. Mengembalikan entitas yang sudah dibuat +
+   * `done` (promise hasil loop) untuk yang ingin menunggu (mis. test).
+   */
+  async dispatchToAgent(agentId: Id, text: string, source: DirectiveSource): Promise<DispatchResult> {
+    const agent = await this.deps.store.getAgent(agentId);
+    if (!agent) throw new Error(`Agent tidak ditemukan: ${agentId}`);
+    const dept = await this.deps.store.getDepartment(agent.departmentId);
+    if (!dept) throw new Error(`Department agent tidak ditemukan: ${agent.departmentId}`);
+    const companyId = dept.companyId;
+
+    const directive = await this.deps.store.createDirective(companyId, {
+      text,
+      source,
+      departmentId: dept.id,
+      status: "in_progress",
+    });
+    const task = await this.deps.store.createTask({
+      companyId,
+      directiveId: directive.id,
+      departmentId: dept.id,
+      title: truncate(text, 200),
+      assignee: agent.id,
+      status: "in_progress",
+    });
+
+    const done = this.runAndPersist(agent, companyId, directive, task).catch(
+      (err): DispatchOutcome => {
+        const message = err instanceof Error ? err.message : String(err);
+        return { status: "error", finalText: null, task, error: message };
+      },
+    );
+
+    return { companyId, directive, task, done };
+  }
+
+  /** Jalankan loop, lalu simpan Artifact + perbarui status Task/Directive. */
+  private async runAndPersist(
+    agent: AgentProfile,
+    companyId: Id,
+    directive: Directive,
+    task: Task,
+  ): Promise<DispatchOutcome> {
+    const { store } = this.deps;
+    const emit: EmitFn = (e) => this.deps.emitAgentEvent(companyId, e);
+
+    let result: AgentLoopResult;
+    try {
+      result = await runAgentLoop(agent, directive.text, {
+        router: this.deps.router,
+        skills: this.deps.skills,
+        memory: this.deps.memory,
+        emit,
+        ...(this.deps.now ? { now: this.deps.now } : {}),
+        ...(this.deps.genId ? { genId: this.deps.genId } : {}),
+        ...(this.deps.maxSteps !== undefined ? { maxSteps: this.deps.maxSteps } : {}),
+      });
+    } catch (err) {
+      // Loop rethrow saat error (BUG-003: status sudah dikembalikan ke idle via event).
+      const message = err instanceof Error ? err.message : String(err);
+      const updated = (await store.updateTask(task.id, { status: "blocked" })) ?? task;
+      await store.updateDirectiveStatus(directive.id, "in_progress");
+      return { status: "error", finalText: null, task: updated, error: message };
+    }
+
+    // Selesai dengan teks final → simpan Artifact, tandai done.
+    if (result.status === "done" && result.finalText) {
+      const artifact = await store.addArtifact({
+        taskId: task.id,
+        kind: "content",
+        content: result.finalText,
+        meta: { agentId: agent.id, directiveId: directive.id, role: agent.role },
+      });
+      const updated =
+        (await store.updateTask(task.id, { status: "done", outputRef: artifact.id })) ?? task;
+      await store.updateDirectiveStatus(directive.id, "done");
+      return { status: result.status, finalText: result.finalText, task: updated, artifact };
+    }
+
+    // Tertahan approval (aksi berisiko) → awaiting_approval (alur approve = Phase 3).
+    if (result.status === "blocked") {
+      const updated =
+        (await store.updateTask(task.id, { status: "awaiting_approval" })) ?? task;
+      await store.updateDirectiveStatus(directive.id, "awaiting_approval");
+      return { status: result.status, finalText: result.finalText, task: updated };
+    }
+
+    // max_steps / tanpa teks final → butuh perhatian (review), tanpa artifact.
+    const updated = (await store.updateTask(task.id, { status: "review" })) ?? task;
+    await store.updateDirectiveStatus(directive.id, "in_progress");
+    return { status: result.status, finalText: result.finalText, task: updated };
+  }
+}
+
+function truncate(s: string, n: number): string {
+  return s.length > n ? `${s.slice(0, n)}…` : s;
+}

@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { buildServer, ConfigStore } from "@vc/server";
+import { buildServer, type ConfigStore } from "@vc/server";
 import { MARKETING_TEMPLATE_ID } from "@vc/templates";
+import { createTestStore, resetTestDb } from "./helpers/mysql.js";
 
 describe("REST config API via inject (Phase 1.3–1.7)", () => {
   let app: FastifyInstance;
@@ -9,13 +10,16 @@ describe("REST config API via inject (Phase 1.3–1.7)", () => {
   const mutated: string[] = [];
 
   beforeAll(async () => {
-    store = new ConfigStore(":memory:");
+    store = await createTestStore();
     app = buildServer({ configStore: store, onMutate: (id) => mutated.push(id) });
     await app.ready();
   });
+  beforeEach(async () => {
+    await resetTestDb();
+  });
   afterAll(async () => {
     await app.close();
-    store.close();
+    await store.close();
   });
 
   it("katalog: templates & skills", async () => {
@@ -93,7 +97,7 @@ describe("REST config API via inject (Phase 1.3–1.7)", () => {
     const delRes = await app.inject({ method: "DELETE", url: `/api/agents/${agentId}` });
     expect(delRes.statusCode).toBe(200);
 
-    // placeholder data nyata kosong
+    // data runtime (tasks/comms) masih kosong sampai ada directive.
     const tasks = await app.inject({ method: "GET", url: `/api/companies/${companyId}/tasks` });
     expect(tasks.json()).toEqual([]);
     const comms = await app.inject({ method: "GET", url: `/api/companies/${companyId}/comms` });
@@ -109,6 +113,29 @@ describe("REST config API via inject (Phase 1.3–1.7)", () => {
 
     const badTemplate = await app.inject({ method: "GET", url: "/api/templates/ngawur" });
     expect(badTemplate.statusCode).toBe(404);
+  });
+
+  it("directive tanpa dispatcher → 503 (runtime belum dipasang)", async () => {
+    const co = (
+      await app.inject({ method: "POST", url: "/api/companies", payload: { name: "NoDispatch" } })
+    ).json() as { id: string };
+    const fl = (
+      await app.inject({ method: "POST", url: `/api/companies/${co.id}/floors`, payload: { name: "L1" } })
+    ).json() as { id: string };
+    const seeded = (
+      await app.inject({
+        method: "POST",
+        url: `/api/floors/${fl.id}/departments`,
+        payload: { templateId: MARKETING_TEMPLATE_ID },
+      })
+    ).json() as { agents: { id: string }[] };
+    const agentId = seeded.agents[0]!.id;
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/agents/${agentId}/directives`,
+      payload: { text: "halo" },
+    });
+    expect(res.statusCode).toBe(503);
   });
 
   it("CR-102: PATCH bisa mengosongkan commsHandle (agent) & workflowId (department)", async () => {
@@ -163,7 +190,7 @@ describe("REST config API via inject (Phase 1.3–1.7)", () => {
 
 describe("CR-101: bearer auth pada /api/* bila API_AUTH_TOKEN di-set", () => {
   it("tanpa/ salah token → 401; token benar → 200", async () => {
-    const store = new ConfigStore(":memory:");
+    const store = await createTestStore();
     const app = buildServer({ configStore: store, apiAuthToken: "rahasia" });
     await app.ready();
 
@@ -189,6 +216,6 @@ describe("CR-101: bearer auth pada /api/* bila API_AUTH_TOKEN di-set", () => {
     expect(health.statusCode).toBe(200);
 
     await app.close();
-    store.close();
+    await store.close();
   });
 });

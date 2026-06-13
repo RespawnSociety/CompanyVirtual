@@ -12,6 +12,7 @@ import type { WaRelay } from "./comms/relay.js";
 import { type CloudApiAdapter, parseCloudWebhook } from "./comms/cloudAdapter.js";
 import type { ConfigStore } from "./db/store.js";
 import { registerConfigRoutes } from "./api/routes.js";
+import type { DirectiveDispatcher } from "./registry/dispatcher.js";
 
 export interface BuildServerDeps {
   /** Relay WhatsApp (Phase 0). Opsional: server config-only (Phase 1) tak butuh. */
@@ -22,6 +23,8 @@ export interface BuildServerDeps {
   configStore?: ConfigStore;
   /** Callback saat config sebuah company berubah (untuk broadcast realtime). */
   onMutate?: (companyId: Id) => void;
+  /** Dispatcher directive → task → agent (Phase 2). Bila ada → endpoint directive aktif. */
+  dispatcher?: DirectiveDispatcher;
   /** Origin yang diizinkan CORS (default "*" untuk dev lokal). */
   corsOrigin?: string;
   /**
@@ -67,6 +70,7 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
   if (deps.configStore) {
     registerConfigRoutes(app, deps.configStore, {
       ...(deps.onMutate ? { onMutate: deps.onMutate } : {}),
+      ...(deps.dispatcher ? { dispatcher: deps.dispatcher } : {}),
     });
   }
 

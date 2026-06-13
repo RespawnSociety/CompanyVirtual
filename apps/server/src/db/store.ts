@@ -1,19 +1,25 @@
 /**
- * ConfigStore — penyimpanan Configuration layer di SQLite (node:sqlite, tanpa native build).
+ * ConfigStore — penyimpanan Configuration layer + runtime di MySQL/MariaDB (XAMPP).
  *
  * Memetakan baris DB ↔ tipe kontrak `@vc/shared` (sumber kebenaran tipe). Relasi turunan
- * (floorIds/departmentIds/agentIds) dihitung saat baca dari tabel anak.
+ * (floorIds/departmentIds/agentIds) dihitung saat baca dari tabel anak (hindari drift);
+ * cascade ditegakkan InnoDB FOREIGN KEY.
  *
- * Catatan: node:sqlite masih "experimental" (Node ≥ 22) tapi stabil untuk pemakaian ini;
- * dipilih agar tidak perlu kompilasi native (penting di Windows + Node terbaru).
+ * Driver: `mysql2/promise` (pure-JS, tanpa native build). API store ini ASYNC — semua
+ * method mengembalikan Promise. Buat instance via `ConfigStore.create(config)` (async:
+ * membuat pool + memastikan skema). Koneksi default = XAMPP (127.0.0.1:3306, root, no-pass).
  */
 
-import { DatabaseSync } from "node:sqlite";
+import mysql, { type Pool, type RowDataPacket, type ResultSetHeader } from "mysql2/promise";
 import { defaultGenId } from "@vc/agent-runtime";
 import type {
   AgentProfile,
+  Artifact,
   Company,
   Department,
+  Directive,
+  DirectiveSource,
+  DirectiveStatus,
   Floor,
   Guardrail,
   Id,
@@ -22,9 +28,20 @@ import type {
   WorkflowDef,
   WorldSnapshot,
   Task,
+  TaskStatus,
   CommsMessage,
 } from "@vc/shared";
-import { SCHEMA_SQL } from "./schema.js";
+import { SCHEMA_STATEMENTS } from "./schema.js";
+import { MysqlMemoryStore } from "./memoryStore.js";
+
+/** Konfigurasi koneksi MySQL (default XAMPP). */
+export interface MysqlConfig {
+  host?: string;
+  port?: number;
+  user?: string;
+  password?: string;
+  database?: string;
+}
 
 /** Input pembuatan company (id & createdAt diisi store). */
 export interface NewCompany {
@@ -46,6 +63,35 @@ export interface NewDepartment {
   templateId?: Id;
   skillPool?: string[];
   workflowId?: Id;
+}
+
+/** Input pembuatan directive (id & createdAt diisi store; status default "received"). */
+export interface NewDirective {
+  text: string;
+  source: DirectiveSource;
+  /** Departemen yang menangani (opsional; scoping/observability). */
+  departmentId?: Id;
+  status?: DirectiveStatus;
+}
+
+/** Input pembuatan task (id & createdAt diisi store; status default "todo"). */
+export interface NewTask {
+  companyId: Id;
+  directiveId: Id;
+  departmentId: Id;
+  title: string;
+  assignee: Id;
+  status?: TaskStatus;
+  inputs?: Record<string, unknown>;
+  dependsOn?: Id[];
+}
+
+/** Input pembuatan artifact (id & createdAt diisi store). */
+export interface NewArtifact {
+  taskId: Id;
+  kind: string;
+  content: string;
+  meta?: Record<string, unknown>;
 }
 
 /** Input pembuatan/replace agent (id auto bila tak diberi). */
@@ -73,41 +119,104 @@ function parseJson<T>(raw: unknown, fallback: T): T {
   }
 }
 
-/** Wrapper SQLite + CRUD seluruh entitas Configuration layer. */
-export class ConfigStore {
-  private readonly db: DatabaseSync;
+/** Baca konfigurasi MySQL dari environment (default XAMPP). */
+export function mysqlConfigFromEnv(env: NodeJS.ProcessEnv = process.env): MysqlConfig {
+  return {
+    host: env.DB_MYSQL_HOST?.trim() || "127.0.0.1",
+    port: Number(env.DB_MYSQL_PORT ?? 3306),
+    user: env.DB_MYSQL_USER?.trim() || "root",
+    password: env.DB_MYSQL_PASSWORD ?? "",
+    database: env.DB_MYSQL_DATABASE?.trim() || "virtual_company",
+  };
+}
 
-  /** `location` = path file (mis. "data/vc.db") atau ":memory:" untuk test. */
-  constructor(location = ":memory:") {
-    this.db = new DatabaseSync(location);
-    this.db.exec(SCHEMA_SQL);
+/** Wrapper MySQL + CRUD seluruh entitas Configuration layer + runtime. */
+export class ConfigStore {
+  private constructor(private readonly pool: Pool) {}
+
+  /**
+   * Buat store: bangun connection pool lalu pastikan skema ada (idempoten).
+   * Database harus sudah dibuat (mis. `CREATE DATABASE virtual_company`).
+   */
+  static async create(config: MysqlConfig = {}): Promise<ConfigStore> {
+    const pool = mysql.createPool({
+      host: config.host ?? "127.0.0.1",
+      port: config.port ?? 3306,
+      user: config.user ?? "root",
+      password: config.password ?? "",
+      database: config.database ?? "virtual_company",
+      connectionLimit: 10,
+      charset: "utf8mb4_unicode_ci",
+      // BIGINT epoch ms aman di Number JS; biarkan default, lalu Number() saat map.
+    });
+    const store = new ConfigStore(pool);
+    await store.init();
+    return store;
   }
 
-  close(): void {
-    this.db.close();
+  private async init(): Promise<void> {
+    for (const stmt of SCHEMA_STATEMENTS) {
+      await this.pool.query(stmt);
+    }
+  }
+
+  async close(): Promise<void> {
+    await this.pool.end();
+  }
+
+  /**
+   * Memory store persisten (Phase 2.5) yang berbagi pool & database dengan ConfigStore.
+   * Tabel `memory_items` sudah dibuat oleh `init()`.
+   */
+  createMemoryStore(): MysqlMemoryStore {
+    return new MysqlMemoryStore(this.pool);
+  }
+
+  // ---------------- query helpers ----------------
+
+  /** Nilai parameter yang didukung mysql2 untuk prepared statement kita. */
+  // (semua kolom kita skalar: string/number/null — JSON sudah di-stringify saat tulis)
+
+  private async all(
+    sql: string,
+    params: (string | number | null)[] = [],
+  ): Promise<Record<string, unknown>[]> {
+    const [rows] = await this.pool.execute<RowDataPacket[]>(sql, params);
+    return rows as Record<string, unknown>[];
+  }
+
+  private async one(
+    sql: string,
+    params: (string | number | null)[] = [],
+  ): Promise<Record<string, unknown> | undefined> {
+    const rows = await this.all(sql, params);
+    return rows[0];
+  }
+
+  private async run(
+    sql: string,
+    params: (string | number | null)[] = [],
+  ): Promise<ResultSetHeader> {
+    const [res] = await this.pool.execute<ResultSetHeader>(sql, params);
+    return res;
   }
 
   // ---------------- Company ----------------
 
-  createCompany(input: NewCompany, now = Date.now()): Company {
+  async createCompany(input: NewCompany, now = Date.now()): Promise<Company> {
     const id = defaultGenId("co");
-    this.db
-      .prepare("INSERT INTO companies (id, name, branding, created_at) VALUES (?, ?, ?, ?)")
-      .run(
-        id,
-        input.name,
-        input.branding ? JSON.stringify(input.branding) : null,
-        now,
-      );
-    return this.getCompany(id)!;
+    await this.run("INSERT INTO companies (id, name, branding, created_at) VALUES (?, ?, ?, ?)", [
+      id,
+      input.name,
+      input.branding ? JSON.stringify(input.branding) : null,
+      now,
+    ]);
+    return (await this.getCompany(id))!;
   }
 
-  listCompanies(): Company[] {
-    const rows = this.db
-      .prepare("SELECT * FROM companies ORDER BY created_at, id")
-      .all() as Record<string, unknown>[];
-    // CR-104: hindari N+1 — ambil floorIds semua company dalam satu query lalu bucket.
-    const byCompany = this.childIdsByParent(
+  async listCompanies(): Promise<Company[]> {
+    const rows = await this.all("SELECT * FROM companies ORDER BY created_at, id");
+    const byCompany = await this.childIdsByParent(
       "floors",
       "company_id",
       rows.map((r) => r["id"] as Id),
@@ -116,97 +225,91 @@ export class ConfigStore {
     return rows.map((r) => this.rowToCompany(r, byCompany.get(r["id"] as Id) ?? []));
   }
 
-  getCompany(id: Id): Company | undefined {
-    const row = this.db.prepare("SELECT * FROM companies WHERE id = ?").get(id) as
-      | Record<string, unknown>
-      | undefined;
-    return row ? this.rowToCompany(row) : undefined;
+  async getCompany(id: Id): Promise<Company | undefined> {
+    const row = await this.one("SELECT * FROM companies WHERE id = ?", [id]);
+    return row ? this.rowToCompany(row, await this.floorIdsOf(id)) : undefined;
   }
 
-  deleteCompany(id: Id): boolean {
-    const res = this.db.prepare("DELETE FROM companies WHERE id = ?").run(id);
-    return res.changes > 0;
+  async deleteCompany(id: Id): Promise<boolean> {
+    const res = await this.run("DELETE FROM companies WHERE id = ?", [id]);
+    return res.affectedRows > 0;
   }
 
-  private rowToCompany(r: Record<string, unknown>, floorIds?: Id[]): Company {
-    const id = r["id"] as Id;
+  private rowToCompany(r: Record<string, unknown>, floorIds: Id[]): Company {
     const company: Company = {
-      id,
+      id: r["id"] as Id,
       name: r["name"] as string,
       createdAt: Number(r["created_at"]),
-      floorIds: floorIds ?? this.floorIdsOf(id),
+      floorIds,
     };
     const branding = parseJson<Record<string, unknown> | null>(r["branding"], null);
     if (branding) company.branding = branding;
     return company;
   }
 
-  private floorIdsOf(companyId: Id): Id[] {
-    const rows = this.db
-      .prepare("SELECT id FROM floors WHERE company_id = ? ORDER BY idx, id")
-      .all(companyId) as Record<string, unknown>[];
+  private async floorIdsOf(companyId: Id): Promise<Id[]> {
+    const rows = await this.all(
+      "SELECT id FROM floors WHERE company_id = ? ORDER BY idx, id",
+      [companyId],
+    );
     return rows.map((r) => r["id"] as Id);
   }
 
   /**
-   * CR-104: ambil id anak untuk BANYAK parent sekaligus (`WHERE parent IN (...)`) lalu
-   * bucket per-parent dalam satu Map — menghindari N+1 query di jalur list/getWorldSnapshot
-   * (hot path broadcast). `table`/`parentCol`/`orderBy` adalah konstanta internal (bukan input
-   * pengguna), jadi aman diinterpolasi. Urutan anak per-parent dijaga via `ORDER BY parent, orderBy`.
+   * Ambil id anak untuk BANYAK parent sekaligus (`WHERE parent IN (...)`) lalu bucket
+   * per-parent dalam satu Map — hindari N+1 di jalur list/getWorldSnapshot (hot path).
+   * `table`/`parentCol`/`orderBy` adalah konstanta internal (bukan input pengguna).
    */
-  private childIdsByParent(
+  private async childIdsByParent(
     table: string,
     parentCol: string,
     parentIds: Id[],
     orderBy: string,
-  ): Map<Id, Id[]> {
+  ): Promise<Map<Id, Id[]>> {
     const buckets = new Map<Id, Id[]>();
     for (const id of parentIds) buckets.set(id, []);
     if (parentIds.length === 0) return buckets;
     const placeholders = parentIds.map(() => "?").join(", ");
-    const rows = this.db
-      .prepare(
-        `SELECT id, ${parentCol} AS parent FROM ${table} ` +
-          `WHERE ${parentCol} IN (${placeholders}) ORDER BY ${parentCol}, ${orderBy}`,
-      )
-      .all(...parentIds) as Record<string, unknown>[];
-    for (const r of rows) {
-      buckets.get(r["parent"] as Id)?.push(r["id"] as Id);
-    }
+    const rows = await this.all(
+      `SELECT id, ${parentCol} AS parent FROM ${table} ` +
+        `WHERE ${parentCol} IN (${placeholders}) ORDER BY ${parentCol}, ${orderBy}`,
+      parentIds,
+    );
+    for (const r of rows) buckets.get(r["parent"] as Id)?.push(r["id"] as Id);
     return buckets;
   }
 
   // ---------------- Floor ----------------
 
-  createFloor(companyId: Id, input: NewFloor): Floor {
-    if (!this.getCompany(companyId)) {
+  async createFloor(companyId: Id, input: NewFloor): Promise<Floor> {
+    if (!(await this.getCompany(companyId))) {
       throw new Error(`Company tidak ditemukan: ${companyId}`);
     }
     const id = defaultGenId("fl");
-    const index = input.index ?? this.nextFloorIndex(companyId);
+    const index = input.index ?? (await this.nextFloorIndex(companyId));
     const mapKey = input.mapKey ?? "office-default";
-    this.db
-      .prepare(
-        "INSERT INTO floors (id, company_id, name, idx, map_key) VALUES (?, ?, ?, ?, ?)",
-      )
-      .run(id, companyId, input.name, index, mapKey);
-    return this.getFloor(id)!;
+    await this.run(
+      "INSERT INTO floors (id, company_id, name, idx, map_key) VALUES (?, ?, ?, ?, ?)",
+      [id, companyId, input.name, index, mapKey],
+    );
+    return (await this.getFloor(id))!;
   }
 
-  private nextFloorIndex(companyId: Id): number {
-    const row = this.db
-      .prepare("SELECT MAX(idx) AS maxIdx FROM floors WHERE company_id = ?")
-      .get(companyId) as Record<string, unknown> | undefined;
+  private async nextFloorIndex(companyId: Id): Promise<number> {
+    const row = await this.one(
+      "SELECT MAX(idx) AS maxIdx FROM floors WHERE company_id = ?",
+      [companyId],
+    );
     const maxIdx = row?.["maxIdx"];
     return maxIdx == null ? 0 : Number(maxIdx) + 1;
   }
 
-  listFloors(companyId: Id): Floor[] {
-    const rows = this.db
-      .prepare("SELECT * FROM floors WHERE company_id = ? ORDER BY idx, id")
-      .all(companyId) as Record<string, unknown>[];
-    // CR-104: departmentIds semua floor dalam satu query.
-    const byFloor = this.childIdsByParent(
+  async listFloors(companyId: Id): Promise<Floor[]> {
+    const rows = await this.all(
+      "SELECT * FROM floors WHERE company_id = ? ORDER BY idx, id",
+      [companyId],
+    );
+    const byFloor = await this.childIdsByParent(
       "departments",
       "floor_id",
       rows.map((r) => r["id"] as Id),
@@ -215,53 +318,48 @@ export class ConfigStore {
     return rows.map((r) => this.rowToFloor(r, byFloor.get(r["id"] as Id) ?? []));
   }
 
-  getFloor(id: Id): Floor | undefined {
-    const row = this.db.prepare("SELECT * FROM floors WHERE id = ?").get(id) as
-      | Record<string, unknown>
-      | undefined;
-    return row ? this.rowToFloor(row) : undefined;
+  async getFloor(id: Id): Promise<Floor | undefined> {
+    const row = await this.one("SELECT * FROM floors WHERE id = ?", [id]);
+    return row ? this.rowToFloor(row, await this.departmentIdsOf(id)) : undefined;
   }
 
-  deleteFloor(id: Id): boolean {
-    const res = this.db.prepare("DELETE FROM floors WHERE id = ?").run(id);
-    return res.changes > 0;
+  async deleteFloor(id: Id): Promise<boolean> {
+    const res = await this.run("DELETE FROM floors WHERE id = ?", [id]);
+    return res.affectedRows > 0;
   }
 
-  private rowToFloor(r: Record<string, unknown>, departmentIds?: Id[]): Floor {
-    const id = r["id"] as Id;
+  private rowToFloor(r: Record<string, unknown>, departmentIds: Id[]): Floor {
     return {
-      id,
+      id: r["id"] as Id,
       companyId: r["company_id"] as Id,
       name: r["name"] as string,
       index: Number(r["idx"]),
       mapKey: r["map_key"] as string,
-      departmentIds: departmentIds ?? this.departmentIdsOf(id),
+      departmentIds,
     };
   }
 
-  private departmentIdsOf(floorId: Id): Id[] {
-    const rows = this.db
-      .prepare("SELECT id FROM departments WHERE floor_id = ? ORDER BY created_at, id")
-      .all(floorId) as Record<string, unknown>[];
+  private async departmentIdsOf(floorId: Id): Promise<Id[]> {
+    const rows = await this.all(
+      "SELECT id FROM departments WHERE floor_id = ? ORDER BY created_at, id",
+      [floorId],
+    );
     return rows.map((r) => r["id"] as Id);
   }
 
   // ---------------- Workflow ----------------
 
-  upsertWorkflow(wf: WorkflowDef): WorkflowDef {
-    this.db
-      .prepare(
-        "INSERT INTO workflows (id, name, steps) VALUES (?, ?, ?) " +
-          "ON CONFLICT(id) DO UPDATE SET name = excluded.name, steps = excluded.steps",
-      )
-      .run(wf.id, wf.name, JSON.stringify(wf.steps));
-    return this.getWorkflow(wf.id)!;
+  async upsertWorkflow(wf: WorkflowDef): Promise<WorkflowDef> {
+    await this.run(
+      "INSERT INTO workflows (id, name, steps) VALUES (?, ?, ?) " +
+        "ON DUPLICATE KEY UPDATE name = VALUES(name), steps = VALUES(steps)",
+      [wf.id, wf.name, JSON.stringify(wf.steps)],
+    );
+    return (await this.getWorkflow(wf.id))!;
   }
 
-  getWorkflow(id: Id): WorkflowDef | undefined {
-    const row = this.db.prepare("SELECT * FROM workflows WHERE id = ?").get(id) as
-      | Record<string, unknown>
-      | undefined;
+  async getWorkflow(id: Id): Promise<WorkflowDef | undefined> {
+    const row = await this.one("SELECT * FROM workflows WHERE id = ?", [id]);
     if (!row) return undefined;
     return {
       id: row["id"] as Id,
@@ -272,19 +370,22 @@ export class ConfigStore {
 
   // ---------------- Department ----------------
 
-  createDepartment(companyId: Id, floorId: Id, input: NewDepartment, now = Date.now()): Department {
-    const floor = this.getFloor(floorId);
+  async createDepartment(
+    companyId: Id,
+    floorId: Id,
+    input: NewDepartment,
+    now = Date.now(),
+  ): Promise<Department> {
+    const floor = await this.getFloor(floorId);
     if (!floor) throw new Error(`Floor tidak ditemukan: ${floorId}`);
     if (floor.companyId !== companyId) {
       throw new Error(`Floor ${floorId} bukan milik company ${companyId}`);
     }
     const id = defaultGenId("dp");
-    this.db
-      .prepare(
-        "INSERT INTO departments (id, company_id, floor_id, name, template_id, purpose, skill_pool, workflow_id, created_at) " +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      )
-      .run(
+    await this.run(
+      "INSERT INTO departments (id, company_id, floor_id, name, template_id, purpose, skill_pool, workflow_id, created_at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
         id,
         companyId,
         floorId,
@@ -294,34 +395,35 @@ export class ConfigStore {
         JSON.stringify(input.skillPool ?? []),
         input.workflowId ?? null,
         now,
-      );
-    return this.getDepartment(id)!;
+      ],
+    );
+    return (await this.getDepartment(id))!;
   }
 
-  getDepartment(id: Id): Department | undefined {
-    const row = this.db.prepare("SELECT * FROM departments WHERE id = ?").get(id) as
-      | Record<string, unknown>
-      | undefined;
-    return row ? this.rowToDepartment(row) : undefined;
+  async getDepartment(id: Id): Promise<Department | undefined> {
+    const row = await this.one("SELECT * FROM departments WHERE id = ?", [id]);
+    return row ? this.rowToDepartment(row, await this.agentIdsOf(id)) : undefined;
   }
 
-  listDepartmentsByFloor(floorId: Id): Department[] {
-    const rows = this.db
-      .prepare("SELECT * FROM departments WHERE floor_id = ? ORDER BY created_at, id")
-      .all(floorId) as Record<string, unknown>[];
+  async listDepartmentsByFloor(floorId: Id): Promise<Department[]> {
+    const rows = await this.all(
+      "SELECT * FROM departments WHERE floor_id = ? ORDER BY created_at, id",
+      [floorId],
+    );
     return this.rowsToDepartments(rows);
   }
 
-  listDepartmentsByCompany(companyId: Id): Department[] {
-    const rows = this.db
-      .prepare("SELECT * FROM departments WHERE company_id = ? ORDER BY created_at, id")
-      .all(companyId) as Record<string, unknown>[];
+  async listDepartmentsByCompany(companyId: Id): Promise<Department[]> {
+    const rows = await this.all(
+      "SELECT * FROM departments WHERE company_id = ? ORDER BY created_at, id",
+      [companyId],
+    );
     return this.rowsToDepartments(rows);
   }
 
-  /** Map baris department → Department dengan agentIds di-batch (CR-104, hindari N+1). */
-  private rowsToDepartments(rows: Record<string, unknown>[]): Department[] {
-    const byDept = this.childIdsByParent(
+  /** Map baris department → Department dengan agentIds di-batch (hindari N+1). */
+  private async rowsToDepartments(rows: Record<string, unknown>[]): Promise<Department[]> {
+    const byDept = await this.childIdsByParent(
       "agents",
       "department_id",
       rows.map((r) => r["id"] as Id),
@@ -330,11 +432,11 @@ export class ConfigStore {
     return rows.map((r) => this.rowToDepartment(r, byDept.get(r["id"] as Id) ?? []));
   }
 
-  updateDepartment(
+  async updateDepartment(
     id: Id,
     patch: Partial<Pick<Department, "name" | "purpose" | "skillPool" | "workflowId">>,
-  ): Department | undefined {
-    const cur = this.getDepartment(id);
+  ): Promise<Department | undefined> {
+    const cur = await this.getDepartment(id);
     if (!cur) return undefined;
     const next = {
       name: patch.name ?? cur.name,
@@ -344,29 +446,27 @@ export class ConfigStore {
       // absent (undefined) → pertahankan nilai lama.
       workflowId: patch.workflowId !== undefined ? patch.workflowId || null : cur.workflowId ?? null,
     };
-    this.db
-      .prepare(
-        "UPDATE departments SET name = ?, purpose = ?, skill_pool = ?, workflow_id = ? WHERE id = ?",
-      )
-      .run(next.name, next.purpose, JSON.stringify(next.skillPool), next.workflowId, id);
+    await this.run(
+      "UPDATE departments SET name = ?, purpose = ?, skill_pool = ?, workflow_id = ? WHERE id = ?",
+      [next.name, next.purpose, JSON.stringify(next.skillPool), next.workflowId, id],
+    );
     return this.getDepartment(id);
   }
 
-  deleteDepartment(id: Id): boolean {
-    const res = this.db.prepare("DELETE FROM departments WHERE id = ?").run(id);
-    return res.changes > 0;
+  async deleteDepartment(id: Id): Promise<boolean> {
+    const res = await this.run("DELETE FROM departments WHERE id = ?", [id]);
+    return res.affectedRows > 0;
   }
 
-  private rowToDepartment(r: Record<string, unknown>, agentIds?: Id[]): Department {
-    const id = r["id"] as Id;
+  private rowToDepartment(r: Record<string, unknown>, agentIds: Id[]): Department {
     const dept: Department = {
-      id,
+      id: r["id"] as Id,
       companyId: r["company_id"] as Id,
       floorId: r["floor_id"] as Id,
       name: r["name"] as string,
       purpose: r["purpose"] as string,
       skillPool: parseJson<string[]>(r["skill_pool"], []),
-      agentIds: agentIds ?? this.agentIdsOf(id),
+      agentIds,
     };
     const templateId = r["template_id"] as string | null;
     if (templateId) dept.templateId = templateId;
@@ -375,29 +475,28 @@ export class ConfigStore {
     return dept;
   }
 
-  private agentIdsOf(departmentId: Id): Id[] {
-    const rows = this.db
-      .prepare("SELECT id FROM agents WHERE department_id = ? ORDER BY created_at, id")
-      .all(departmentId) as Record<string, unknown>[];
+  private async agentIdsOf(departmentId: Id): Promise<Id[]> {
+    const rows = await this.all(
+      "SELECT id FROM agents WHERE department_id = ? ORDER BY created_at, id",
+      [departmentId],
+    );
     return rows.map((r) => r["id"] as Id);
   }
 
   // ---------------- Agent (AgentProfile) ----------------
 
-  createAgent(departmentId: Id, input: NewAgent, now = Date.now()): AgentProfile {
-    if (!this.getDepartment(departmentId)) {
+  async createAgent(departmentId: Id, input: NewAgent, now = Date.now()): Promise<AgentProfile> {
+    if (!(await this.getDepartment(departmentId))) {
       throw new Error(`Department tidak ditemukan: ${departmentId}`);
     }
     const id = input.id ?? defaultGenId("ag");
     const memoryNamespace = input.memoryNamespace ?? `agent:${id}`;
     const status = input.status ?? "idle";
-    this.db
-      .prepare(
-        "INSERT INTO agents (id, department_id, name, role, desk_pos, sprite_key, description, " +
-          "skill_scope, guardrails, comms_handle, model_policy, memory_namespace, status, created_at) " +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      )
-      .run(
+    await this.run(
+      "INSERT INTO agents (id, department_id, name, role, desk_pos, sprite_key, description, " +
+        "skill_scope, guardrails, comms_handle, model_policy, memory_namespace, status, created_at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
         id,
         departmentId,
         input.name,
@@ -412,36 +511,35 @@ export class ConfigStore {
         memoryNamespace,
         status,
         now,
-      );
-    return this.getAgent(id)!;
+      ],
+    );
+    return (await this.getAgent(id))!;
   }
 
-  getAgent(id: Id): AgentProfile | undefined {
-    const row = this.db.prepare("SELECT * FROM agents WHERE id = ?").get(id) as
-      | Record<string, unknown>
-      | undefined;
+  async getAgent(id: Id): Promise<AgentProfile | undefined> {
+    const row = await this.one("SELECT * FROM agents WHERE id = ?", [id]);
     return row ? this.rowToAgent(row) : undefined;
   }
 
-  listAgentsByDepartment(departmentId: Id): AgentProfile[] {
-    const rows = this.db
-      .prepare("SELECT * FROM agents WHERE department_id = ? ORDER BY created_at, id")
-      .all(departmentId) as Record<string, unknown>[];
+  async listAgentsByDepartment(departmentId: Id): Promise<AgentProfile[]> {
+    const rows = await this.all(
+      "SELECT * FROM agents WHERE department_id = ? ORDER BY created_at, id",
+      [departmentId],
+    );
     return rows.map((r) => this.rowToAgent(r));
   }
 
-  listAgentsByCompany(companyId: Id): AgentProfile[] {
-    const rows = this.db
-      .prepare(
-        "SELECT a.* FROM agents a JOIN departments d ON a.department_id = d.id " +
-          "WHERE d.company_id = ? ORDER BY a.created_at, a.id",
-      )
-      .all(companyId) as Record<string, unknown>[];
+  async listAgentsByCompany(companyId: Id): Promise<AgentProfile[]> {
+    const rows = await this.all(
+      "SELECT a.* FROM agents a JOIN departments d ON a.department_id = d.id " +
+        "WHERE d.company_id = ? ORDER BY a.created_at, a.id",
+      [companyId],
+    );
     return rows.map((r) => this.rowToAgent(r));
   }
 
-  updateAgent(id: Id, patch: Partial<NewAgent>): AgentProfile | undefined {
-    const cur = this.getAgent(id);
+  async updateAgent(id: Id, patch: Partial<NewAgent>): Promise<AgentProfile | undefined> {
+    const cur = await this.getAgent(id);
     if (!cur) return undefined;
     const next: AgentProfile = {
       ...cur,
@@ -457,13 +555,11 @@ export class ConfigStore {
       ...(patch.memoryNamespace !== undefined ? { memoryNamespace: patch.memoryNamespace } : {}),
       ...(patch.status !== undefined ? { status: patch.status } : {}),
     };
-    this.db
-      .prepare(
-        "UPDATE agents SET name = ?, role = ?, desk_pos = ?, sprite_key = ?, description = ?, " +
-          "skill_scope = ?, guardrails = ?, comms_handle = ?, model_policy = ?, memory_namespace = ?, status = ? " +
-          "WHERE id = ?",
-      )
-      .run(
+    await this.run(
+      "UPDATE agents SET name = ?, role = ?, desk_pos = ?, sprite_key = ?, description = ?, " +
+        "skill_scope = ?, guardrails = ?, comms_handle = ?, model_policy = ?, memory_namespace = ?, status = ? " +
+        "WHERE id = ?",
+      [
         next.name,
         next.role,
         JSON.stringify(next.deskPos),
@@ -477,13 +573,14 @@ export class ConfigStore {
         next.memoryNamespace,
         next.status,
         id,
-      );
+      ],
+    );
     return this.getAgent(id);
   }
 
-  deleteAgent(id: Id): boolean {
-    const res = this.db.prepare("DELETE FROM agents WHERE id = ?").run(id);
-    return res.changes > 0;
+  async deleteAgent(id: Id): Promise<boolean> {
+    const res = await this.run("DELETE FROM agents WHERE id = ?", [id]);
+    return res.affectedRows > 0;
   }
 
   private rowToAgent(r: Record<string, unknown>): AgentProfile {
@@ -507,46 +604,192 @@ export class ConfigStore {
     return agent;
   }
 
-  // ---------------- Task / Comms (Phase 1: read-only, biasanya kosong) ----------------
+  // ---------------- Directive (Phase 2) ----------------
 
-  listTasksByCompany(companyId: Id): Task[] {
-    const rows = this.db
-      .prepare(
-        "SELECT t.* FROM tasks t JOIN departments d ON t.department_id = d.id " +
-          "WHERE d.company_id = ? ORDER BY t.created_at, t.id",
-      )
-      .all(companyId) as Record<string, unknown>[];
-    return rows.map((r) => ({
+  async createDirective(companyId: Id, input: NewDirective, now = Date.now()): Promise<Directive> {
+    if (!(await this.getCompany(companyId))) throw new Error(`Company tidak ditemukan: ${companyId}`);
+    const id = defaultGenId("dir");
+    const status: DirectiveStatus = input.status ?? "received";
+    await this.run(
+      "INSERT INTO directives (id, company_id, department_id, `text`, source, status, created_at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [id, companyId, input.departmentId ?? null, input.text, input.source, status, now],
+    );
+    return (await this.getDirective(id))!;
+  }
+
+  async getDirective(id: Id): Promise<Directive | undefined> {
+    const row = await this.one("SELECT * FROM directives WHERE id = ?", [id]);
+    return row ? this.rowToDirective(row) : undefined;
+  }
+
+  async updateDirectiveStatus(id: Id, status: DirectiveStatus): Promise<Directive | undefined> {
+    const res = await this.run("UPDATE directives SET status = ? WHERE id = ?", [status, id]);
+    return res.affectedRows > 0 ? this.getDirective(id) : undefined;
+  }
+
+  async listDirectivesByCompany(companyId: Id): Promise<Directive[]> {
+    const rows = await this.all(
+      "SELECT * FROM directives WHERE company_id = ? ORDER BY created_at, id",
+      [companyId],
+    );
+    return rows.map((r) => this.rowToDirective(r));
+  }
+
+  private rowToDirective(r: Record<string, unknown>): Directive {
+    return {
+      id: r["id"] as Id,
+      text: r["text"] as string,
+      source: r["source"] as DirectiveSource,
+      createdAt: Number(r["created_at"]),
+      status: r["status"] as DirectiveStatus,
+    };
+  }
+
+  // ---------------- Task (Phase 2) ----------------
+
+  async createTask(input: NewTask, now = Date.now()): Promise<Task> {
+    const id = defaultGenId("task");
+    const status: TaskStatus = input.status ?? "todo";
+    await this.run(
+      "INSERT INTO tasks (id, company_id, directive_id, department_id, title, assignee, status, inputs, output_ref, depends_on, created_at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        id,
+        input.companyId,
+        input.directiveId,
+        input.departmentId,
+        input.title,
+        input.assignee,
+        status,
+        input.inputs ? JSON.stringify(input.inputs) : null,
+        null,
+        JSON.stringify(input.dependsOn ?? []),
+        now,
+      ],
+    );
+    return (await this.getTask(id))!;
+  }
+
+  async getTask(id: Id): Promise<Task | undefined> {
+    const row = await this.one("SELECT * FROM tasks WHERE id = ?", [id]);
+    return row ? this.rowToTask(row) : undefined;
+  }
+
+  /** Update sebagian field task (status / outputRef / inputs). */
+  async updateTask(
+    id: Id,
+    patch: { status?: TaskStatus; outputRef?: Id | null; inputs?: Record<string, unknown> },
+  ): Promise<Task | undefined> {
+    const cur = await this.getTask(id);
+    if (!cur) return undefined;
+    const status = patch.status ?? cur.status;
+    const outputRef =
+      patch.outputRef !== undefined ? patch.outputRef || null : cur.outputRef ?? null;
+    const inputs = patch.inputs !== undefined ? patch.inputs : cur.inputs;
+    await this.run("UPDATE tasks SET status = ?, output_ref = ?, inputs = ? WHERE id = ?", [
+      status,
+      outputRef,
+      inputs ? JSON.stringify(inputs) : null,
+      id,
+    ]);
+    return this.getTask(id);
+  }
+
+  async listTasksByCompany(companyId: Id): Promise<Task[]> {
+    const rows = await this.all(
+      "SELECT * FROM tasks WHERE company_id = ? ORDER BY created_at, id",
+      [companyId],
+    );
+    return rows.map((r) => this.rowToTask(r));
+  }
+
+  async listTasksByDirective(directiveId: Id): Promise<Task[]> {
+    const rows = await this.all(
+      "SELECT * FROM tasks WHERE directive_id = ? ORDER BY created_at, id",
+      [directiveId],
+    );
+    return rows.map((r) => this.rowToTask(r));
+  }
+
+  private rowToTask(r: Record<string, unknown>): Task {
+    return {
       id: r["id"] as Id,
       directiveId: r["directive_id"] as Id,
       departmentId: r["department_id"] as Id,
       title: r["title"] as string,
       assignee: r["assignee"] as Id,
-      status: r["status"] as Task["status"],
+      status: r["status"] as TaskStatus,
       ...(r["inputs"] ? { inputs: parseJson<Record<string, unknown>>(r["inputs"], {}) } : {}),
       ...(r["output_ref"] ? { outputRef: r["output_ref"] as Id } : {}),
       dependsOn: parseJson<Id[]>(r["depends_on"], []),
-    }));
+    };
   }
 
-  listCommsByCompany(_companyId: Id): CommsMessage[] {
-    // Phase 1: belum ada pemetaan thread→company dan belum ada produsen comms.
+  // ---------------- Artifact (Phase 2) ----------------
+
+  async addArtifact(input: NewArtifact, now = Date.now()): Promise<Artifact> {
+    const id = defaultGenId("art");
+    await this.run(
+      "INSERT INTO artifacts (id, task_id, kind, content, meta, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      [id, input.taskId, input.kind, input.content, input.meta ? JSON.stringify(input.meta) : null, now],
+    );
+    return (await this.getArtifact(id))!;
+  }
+
+  async getArtifact(id: Id): Promise<Artifact | undefined> {
+    const row = await this.one("SELECT * FROM artifacts WHERE id = ?", [id]);
+    return row ? this.rowToArtifact(row) : undefined;
+  }
+
+  async listArtifactsByTask(taskId: Id): Promise<Artifact[]> {
+    const rows = await this.all(
+      "SELECT * FROM artifacts WHERE task_id = ? ORDER BY created_at, id",
+      [taskId],
+    );
+    return rows.map((r) => this.rowToArtifact(r));
+  }
+
+  async listArtifactsByCompany(companyId: Id): Promise<Artifact[]> {
+    const rows = await this.all(
+      "SELECT ar.* FROM artifacts ar JOIN tasks t ON ar.task_id = t.id " +
+        "WHERE t.company_id = ? ORDER BY ar.created_at, ar.id",
+      [companyId],
+    );
+    return rows.map((r) => this.rowToArtifact(r));
+  }
+
+  private rowToArtifact(r: Record<string, unknown>): Artifact {
+    const artifact: Artifact = {
+      id: r["id"] as Id,
+      kind: r["kind"] as string,
+      taskId: r["task_id"] as Id,
+      content: r["content"] as string,
+    };
+    const meta = parseJson<Record<string, unknown> | null>(r["meta"], null);
+    if (meta) artifact.meta = meta;
+    return artifact;
+  }
+
+  // ---------------- Comms ----------------
+
+  async listCommsByCompany(_companyId: Id): Promise<CommsMessage[]> {
+    // Phase 1–2: belum ada pemetaan thread→company dan belum ada produsen comms.
     // Sengaja kembalikan kosong: mengembalikan SEMUA pesan akan membocorkan percakapan
-    // lintas-company begitu tabel terisi. Comms ter-scope per company menyusul di Phase 3
-    // (WA relay 2 arah + tabel threads dengan companyId).
+    // lintas-company begitu tabel terisi. Comms ter-scope per company menyusul di Phase 3.
     return [];
   }
 
   // ---------------- World snapshot ----------------
 
-  getWorldSnapshot(companyId: Id): WorldSnapshot | undefined {
-    const company = this.getCompany(companyId);
+  async getWorldSnapshot(companyId: Id): Promise<WorldSnapshot | undefined> {
+    const company = await this.getCompany(companyId);
     if (!company) return undefined;
-    return {
-      company,
-      floors: this.listFloors(companyId),
-      departments: this.listDepartmentsByCompany(companyId),
-      agents: this.listAgentsByCompany(companyId),
-    };
+    const [floors, departments, agents] = await Promise.all([
+      this.listFloors(companyId),
+      this.listDepartmentsByCompany(companyId),
+      this.listAgentsByCompany(companyId),
+    ]);
+    return { company, floors, departments, agents };
   }
 }

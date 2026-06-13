@@ -1,9 +1,11 @@
 /**
- * REST API Configuration layer (plan §4). FACE (web) memanggil ini untuk CRUD
- * Company/Floor/Department/Agent + listing template & skill.
+ * REST API Configuration layer (plan §4) + runtime directive (Phase 2). FACE (web) memanggil
+ * ini untuk CRUD Company/Floor/Department/Agent, listing template & skill, dan mengirim arahan.
  *
  * Setelah mutasi yang mengubah world sebuah company, handler memanggil `opts.onMutate(companyId)`
  * agar RealtimeHub mem-broadcast snapshot terbaru (decoupling: routes tak tahu socket.io).
+ *
+ * Store ber-API async (MySQL) → seluruh handler async/await.
  */
 
 import type { FastifyInstance, FastifyReply } from "fastify";
@@ -15,10 +17,13 @@ import {
 import type { ConfigStore, NewAgent } from "../db/store.js";
 import { seedDepartmentFromTemplate } from "../config/seed.js";
 import { KNOWN_SKILLS } from "../config/skills.js";
+import type { DirectiveDispatcher } from "../registry/dispatcher.js";
 
 export interface ConfigRoutesOptions {
   /** Dipanggil dengan companyId terdampak setelah mutasi sukses (untuk broadcast realtime). */
   onMutate?: (companyId: Id) => void;
+  /** Dispatcher directive → task → agent (Phase 2). Bila absent, endpoint directive 503. */
+  dispatcher?: DirectiveDispatcher;
 }
 
 function bad(reply: FastifyReply, msg: string): FastifyReply {
@@ -71,7 +76,7 @@ export function registerConfigRoutes(
 
   app.get("/api/companies", () => store.listCompanies());
 
-  app.post("/api/companies", (req, reply) => {
+  app.post("/api/companies", async (req, reply) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const name = asStr(body["name"]);
     if (!name) return bad(reply, "Field 'name' wajib diisi.");
@@ -79,82 +84,94 @@ export function registerConfigRoutes(
       typeof body["branding"] === "object" && body["branding"] !== null
         ? (body["branding"] as Record<string, unknown>)
         : undefined;
-    const company = store.createCompany(branding ? { name, branding } : { name });
+    const company = await store.createCompany(branding ? { name, branding } : { name });
     return reply.code(201).send(company);
   });
 
-  app.get("/api/companies/:id", (req, reply) => {
+  app.get("/api/companies/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const company = store.getCompany(id);
+    const company = await store.getCompany(id);
     return company ?? notFound(reply, `Company tidak ditemukan: ${id}`);
   });
 
-  app.delete("/api/companies/:id", (req, reply) => {
+  app.delete("/api/companies/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const deleted = store.deleteCompany(id);
+    const deleted = await store.deleteCompany(id);
     if (!deleted) return notFound(reply, `Company tidak ditemukan: ${id}`);
     return reply.send({ deleted: true });
   });
 
-  app.get("/api/companies/:id/world", (req, reply) => {
+  app.get("/api/companies/:id/world", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const snap = store.getWorldSnapshot(id);
+    const snap = await store.getWorldSnapshot(id);
     return snap ?? notFound(reply, `Company tidak ditemukan: ${id}`);
   });
 
-  app.get("/api/companies/:id/tasks", (req, reply) => {
+  app.get("/api/companies/:id/tasks", async (req, reply) => {
     const { id } = req.params as { id: string };
-    if (!store.getCompany(id)) return notFound(reply, `Company tidak ditemukan: ${id}`);
+    if (!(await store.getCompany(id))) return notFound(reply, `Company tidak ditemukan: ${id}`);
     return store.listTasksByCompany(id);
   });
 
-  app.get("/api/companies/:id/comms", (req, reply) => {
+  app.get("/api/companies/:id/artifacts", async (req, reply) => {
     const { id } = req.params as { id: string };
-    if (!store.getCompany(id)) return notFound(reply, `Company tidak ditemukan: ${id}`);
+    if (!(await store.getCompany(id))) return notFound(reply, `Company tidak ditemukan: ${id}`);
+    return store.listArtifactsByCompany(id);
+  });
+
+  app.get("/api/companies/:id/directives", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!(await store.getCompany(id))) return notFound(reply, `Company tidak ditemukan: ${id}`);
+    return store.listDirectivesByCompany(id);
+  });
+
+  app.get("/api/companies/:id/comms", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!(await store.getCompany(id))) return notFound(reply, `Company tidak ditemukan: ${id}`);
     return store.listCommsByCompany(id);
   });
 
   // ---------------- Floor ----------------
 
-  app.get("/api/companies/:companyId/floors", (req, reply) => {
+  app.get("/api/companies/:companyId/floors", async (req, reply) => {
     const { companyId } = req.params as { companyId: string };
-    if (!store.getCompany(companyId)) return notFound(reply, `Company tidak ditemukan: ${companyId}`);
+    if (!(await store.getCompany(companyId))) return notFound(reply, `Company tidak ditemukan: ${companyId}`);
     return store.listFloors(companyId);
   });
 
-  app.post("/api/companies/:companyId/floors", (req, reply) => {
+  app.post("/api/companies/:companyId/floors", async (req, reply) => {
     const { companyId } = req.params as { companyId: string };
-    if (!store.getCompany(companyId)) return notFound(reply, `Company tidak ditemukan: ${companyId}`);
+    if (!(await store.getCompany(companyId))) return notFound(reply, `Company tidak ditemukan: ${companyId}`);
     const body = (req.body ?? {}) as Record<string, unknown>;
     const name = asStr(body["name"]);
     if (!name) return bad(reply, "Field 'name' wajib diisi.");
     const mapKey = asStr(body["mapKey"]);
-    const floor = store.createFloor(companyId, mapKey ? { name, mapKey } : { name });
+    const floor = await store.createFloor(companyId, mapKey ? { name, mapKey } : { name });
     notify(companyId);
     return reply.code(201).send(floor);
   });
 
-  app.delete("/api/floors/:id", (req, reply) => {
+  app.delete("/api/floors/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const floor = store.getFloor(id);
+    const floor = await store.getFloor(id);
     if (!floor) return notFound(reply, `Floor tidak ditemukan: ${id}`);
-    store.deleteFloor(id);
+    await store.deleteFloor(id);
     notify(floor.companyId);
     return reply.send({ deleted: true });
   });
 
   // ---------------- Department ----------------
 
-  app.get("/api/floors/:floorId/departments", (req, reply) => {
+  app.get("/api/floors/:floorId/departments", async (req, reply) => {
     const { floorId } = req.params as { floorId: string };
-    if (!store.getFloor(floorId)) return notFound(reply, `Floor tidak ditemukan: ${floorId}`);
+    if (!(await store.getFloor(floorId))) return notFound(reply, `Floor tidak ditemukan: ${floorId}`);
     return store.listDepartmentsByFloor(floorId);
   });
 
   // Buat departemen: dari template (templateId) ATAU custom (name+purpose).
-  app.post("/api/floors/:floorId/departments", (req, reply) => {
+  app.post("/api/floors/:floorId/departments", async (req, reply) => {
     const { floorId } = req.params as { floorId: string };
-    const floor = store.getFloor(floorId);
+    const floor = await store.getFloor(floorId);
     if (!floor) return notFound(reply, `Floor tidak ditemukan: ${floorId}`);
     const body = (req.body ?? {}) as Record<string, unknown>;
     const templateId = asStr(body["templateId"]);
@@ -164,7 +181,7 @@ export function registerConfigRoutes(
     if (templateId) {
       const template = getDepartmentTemplate(templateId);
       if (!template) return bad(reply, `Template tidak dikenal: ${templateId}`);
-      const seeded = seedDepartmentFromTemplate(store, {
+      const seeded = await seedDepartmentFromTemplate(store, {
         companyId: floor.companyId,
         floorId,
         template,
@@ -181,7 +198,7 @@ export function registerConfigRoutes(
     }
     const skillPool = asStrArray(body["skillPool"]) ?? [];
     const workflowId = asStr(body["workflowId"]);
-    const department = store.createDepartment(floor.companyId, floorId, {
+    const department = await store.createDepartment(floor.companyId, floorId, {
       name,
       purpose,
       skillPool,
@@ -191,15 +208,15 @@ export function registerConfigRoutes(
     return reply.code(201).send({ department, agents: [], workflow: null });
   });
 
-  app.get("/api/departments/:id", (req, reply) => {
+  app.get("/api/departments/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const dept = store.getDepartment(id);
+    const dept = await store.getDepartment(id);
     return dept ?? notFound(reply, `Department tidak ditemukan: ${id}`);
   });
 
-  app.patch("/api/departments/:id", (req, reply) => {
+  app.patch("/api/departments/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const cur = store.getDepartment(id);
+    const cur = await store.getDepartment(id);
     if (!cur) return notFound(reply, `Department tidak ditemukan: ${id}`);
     const body = (req.body ?? {}) as Record<string, unknown>;
     const patch: Parameters<ConfigStore["updateDepartment"]>[1] = {};
@@ -212,41 +229,41 @@ export function registerConfigRoutes(
     // CR-102: workflowId opsional & bisa dikosongkan — kirim apa adanya bila key hadir
     // (string kosong → store meng-clear jadi null); absent → tak diubah.
     if ("workflowId" in body) patch.workflowId = asStr(body["workflowId"]) ?? "";
-    const updated = store.updateDepartment(id, patch);
+    const updated = await store.updateDepartment(id, patch);
     notify(cur.companyId);
     return updated;
   });
 
-  app.delete("/api/departments/:id", (req, reply) => {
+  app.delete("/api/departments/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const dept = store.getDepartment(id);
+    const dept = await store.getDepartment(id);
     if (!dept) return notFound(reply, `Department tidak ditemukan: ${id}`);
-    store.deleteDepartment(id);
+    await store.deleteDepartment(id);
     notify(dept.companyId);
     return reply.send({ deleted: true });
   });
 
-  app.get("/api/departments/:id/workflow", (req, reply) => {
+  app.get("/api/departments/:id/workflow", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const dept = store.getDepartment(id);
+    const dept = await store.getDepartment(id);
     if (!dept) return notFound(reply, `Department tidak ditemukan: ${id}`);
     if (!dept.workflowId) return reply.send(null);
-    return store.getWorkflow(dept.workflowId) ?? null;
+    return (await store.getWorkflow(dept.workflowId)) ?? null;
   });
 
   // ---------------- Agent (AgentProfile) ----------------
 
-  app.get("/api/departments/:departmentId/agents", (req, reply) => {
+  app.get("/api/departments/:departmentId/agents", async (req, reply) => {
     const { departmentId } = req.params as { departmentId: string };
-    if (!store.getDepartment(departmentId)) {
+    if (!(await store.getDepartment(departmentId))) {
       return notFound(reply, `Department tidak ditemukan: ${departmentId}`);
     }
     return store.listAgentsByDepartment(departmentId);
   });
 
-  app.post("/api/departments/:departmentId/agents", (req, reply) => {
+  app.post("/api/departments/:departmentId/agents", async (req, reply) => {
     const { departmentId } = req.params as { departmentId: string };
-    const dept = store.getDepartment(departmentId);
+    const dept = await store.getDepartment(departmentId);
     if (!dept) return notFound(reply, `Department tidak ditemukan: ${departmentId}`);
     const body = (req.body ?? {}) as Record<string, unknown>;
     const name = asStr(body["name"]);
@@ -266,14 +283,14 @@ export function registerConfigRoutes(
         ? { modelPolicy: body["modelPolicy"] as ModelPolicy }
         : {}),
     };
-    const agent = store.createAgent(departmentId, input);
+    const agent = await store.createAgent(departmentId, input);
     notify(dept.companyId);
     return reply.code(201).send(agent);
   });
 
-  app.patch("/api/agents/:id", (req, reply) => {
+  app.patch("/api/agents/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const cur = store.getAgent(id);
+    const cur = await store.getAgent(id);
     if (!cur) return notFound(reply, `Agent tidak ditemukan: ${id}`);
     const body = (req.body ?? {}) as Record<string, unknown>;
     const patch: Partial<NewAgent> = {};
@@ -300,19 +317,53 @@ export function registerConfigRoutes(
       if (!status) return bad(reply, "Field 'status' harus salah satu: idle|working|talking|blocked.");
       patch.status = status;
     }
-    const updated = store.updateAgent(id, patch);
-    const dept = store.getDepartment(cur.departmentId);
+    const updated = await store.updateAgent(id, patch);
+    const dept = await store.getDepartment(cur.departmentId);
     notify(dept?.companyId);
     return updated;
   });
 
-  app.delete("/api/agents/:id", (req, reply) => {
+  app.delete("/api/agents/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const agent = store.getAgent(id);
+    const agent = await store.getAgent(id);
     if (!agent) return notFound(reply, `Agent tidak ditemukan: ${id}`);
-    const dept = store.getDepartment(agent.departmentId);
-    store.deleteAgent(id);
+    const dept = await store.getDepartment(agent.departmentId);
+    await store.deleteAgent(id);
     notify(dept?.companyId);
     return reply.send({ deleted: true });
+  });
+
+  // ---------------- Directive → Task → Agent (Phase 2.3) ----------------
+
+  // Kirim arahan ke SATU agent (karakter). Buat Directive + Task, dispatch ke agent loop
+  // (latar belakang: emit agent:event utk animasi, simpan Artifact saat selesai). Balas 202
+  // dengan directive+task agar UI bisa langsung menampilkan & menganimasikan.
+  app.post("/api/agents/:agentId/directives", async (req, reply) => {
+    if (!opts.dispatcher) {
+      return reply.code(503).send({ error: "dispatcher tidak aktif (runtime Phase 2 belum dipasang)" });
+    }
+    const { agentId } = req.params as { agentId: string };
+    const agent = await store.getAgent(agentId);
+    if (!agent) return notFound(reply, `Agent tidak ditemukan: ${agentId}`);
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const text = asStr(body["text"]);
+    if (!text) return bad(reply, "Field 'text' (arahan) wajib diisi.");
+
+    const dispatched = await opts.dispatcher.dispatchToAgent(agentId, text, "ui");
+    notify(dispatched.companyId);
+    return reply.code(202).send({ directive: dispatched.directive, task: dispatched.task });
+  });
+
+  app.get("/api/tasks/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const task = await store.getTask(id);
+    if (!task) return notFound(reply, `Task tidak ditemukan: ${id}`);
+    return task;
+  });
+
+  app.get("/api/tasks/:id/artifacts", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!(await store.getTask(id))) return notFound(reply, `Task tidak ditemukan: ${id}`);
+    return store.listArtifactsByTask(id);
   });
 }

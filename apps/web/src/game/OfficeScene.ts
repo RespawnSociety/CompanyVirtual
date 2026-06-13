@@ -11,7 +11,7 @@
 
 import Phaser from "phaser";
 import EasyStar from "easystarjs";
-import type { AgentProfile, WorldSnapshot } from "@vc/shared";
+import type { AgentProfile, AgentStatus, WorldSnapshot } from "@vc/shared";
 import { TILE, TILE_COLORS, colorForSprite } from "./sprites.js";
 import { DEFAULT_MAP_KEY, isKnownMapKey, mapPathFor } from "./maps.js";
 
@@ -25,9 +25,21 @@ interface CharObj {
   sprite: Phaser.GameObjects.Image;
   label: Phaser.GameObjects.Text;
   ring: Phaser.GameObjects.Arc;
+  /** Titik status (Phase 2.4): warna per status; berdenyut saat working. */
+  statusDot: Phaser.GameObjects.Arc;
+  statusTween?: Phaser.Tweens.Tween;
+  status: AgentStatus;
   tile: { x: number; y: number };
   active?: Phaser.Tweens.TweenChain;
 }
+
+/** Warna titik status agent (Phase 2.4 — animasi event bus). */
+const STATUS_COLORS: Record<AgentStatus, number> = {
+  idle: 0x55607a,
+  working: 0x4aa3ff,
+  talking: 0x4ade80,
+  blocked: 0xf87171,
+};
 
 export class OfficeScene extends Phaser.Scene {
   private ready = false;
@@ -146,6 +158,7 @@ export class OfficeScene extends Phaser.Scene {
     for (const [id, obj] of this.chars) {
       if (!seen.has(id)) {
         obj.active?.stop();
+        obj.statusTween?.stop(); // hentikan denyut working agar tak menarget sprite yang di-destroy
         obj.container.destroy();
         this.chars.delete(id);
         if (this.selectedId === id) this.selectedId = null;
@@ -226,9 +239,40 @@ export class OfficeScene extends Phaser.Scene {
         color: "#e6ebf5",
       })
       .setOrigin(0.5, 1);
+    const statusDot = this.add.circle(11, -11, 4, STATUS_COLORS.idle, 1).setStrokeStyle(1, 0x0f1420, 1);
 
-    const container = this.add.container(wx, wy, [ring, sprite, label]).setDepth(10);
-    return { container, sprite, label, ring, tile };
+    const container = this.add.container(wx, wy, [ring, sprite, label, statusDot]).setDepth(10);
+    const obj: CharObj = { container, sprite, label, ring, statusDot, status: "idle", tile };
+    this.applyStatus(obj, agent.status);
+    return obj;
+  }
+
+  /**
+   * Phase 2.4 — set status visual agent dari event bus (`agent:event` type "status").
+   * Aman dipanggil kapan pun; no-op bila karakter belum ada (mis. snapshot belum sinkron).
+   */
+  setAgentStatus(agentId: string, status: AgentStatus): void {
+    const obj = this.chars.get(agentId);
+    if (obj) this.applyStatus(obj, status);
+  }
+
+  /** Terapkan warna titik status + denyut saat working. */
+  private applyStatus(obj: CharObj, status: AgentStatus): void {
+    obj.status = status;
+    obj.statusDot.setFillStyle(STATUS_COLORS[status], 1);
+    obj.statusTween?.stop();
+    delete obj.statusTween;
+    obj.sprite.setScale(1);
+    if (status === "working") {
+      obj.statusTween = this.tweens.add({
+        targets: obj.sprite,
+        scale: 1.18,
+        duration: 450,
+        yoyo: true,
+        repeat: -1,
+        ease: "Sine.InOut",
+      });
+    }
   }
 
   private handleClick(worldX: number, worldY: number): void {

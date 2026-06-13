@@ -9,17 +9,35 @@
 
 - **Node.js ≥ 20** (dites di Node 25). Cek: `node --version`.
 - Paket dependency lewat **npm workspaces** (pnpm tidak wajib).
+- **MySQL/MariaDB hidup** (mis. **XAMPP** — start "MySQL" di control panel). Mulai Phase 2
+  persistensi pakai MySQL (driver `mysql2`, tanpa native build). Default koneksi cocok dengan
+  XAMPP (`127.0.0.1:3306`, user `root`, password kosong).
 
 ## Setup
 
 ```bash
 npm install            # pasang dependency semua workspace
 cp .env.example .env   # lalu isi nilai (Windows: copy .env.example .env)
+```
+
+Buat database (sekali; sesuaikan kredensial bila bukan XAMPP default):
+
+```bash
+# Windows + XAMPP:
+C:\xampp\mysql\bin\mysql.exe -u root -e "CREATE DATABASE IF NOT EXISTS virtual_company CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE IF NOT EXISTS virtual_company_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+```
+
+`virtual_company` = database app; `virtual_company_test` = khusus `npm test` (di-TRUNCATE antar-test;
+dibuat otomatis bila belum ada). Skema tabel dibuat otomatis saat server/test start (`ConfigStore.init`).
+
+```bash
 npm run build          # tsc --build (kompilasi semua package → dist/)
 ```
 
 > `npm test` dan `npm run spike:*` otomatis menjalankan `npm run build` lebih dulu
 > (lewat hook `pre*`), jadi langkah `build` manual hanya perlu sekali untuk memastikan.
+> **Catatan:** sejak Phase 2, `npm test` (db/seed/configApi/dispatch) **butuh MySQL hidup**.
+> Tes non-DB (router/loop/memory/relay/ownerAuth/cloudWebhook/templates/server) tetap jalan tanpa MySQL.
 
 ---
 
@@ -123,6 +141,44 @@ npm run lint            # eslint seluruh repo (termasuk web)
 
 ---
 
+## Phase 2 — Runtime + 1 Agent Nyata 🤖
+
+Directive (UI) → buat `Task` → dispatch ke 1 agent → agent loop (via 9Router) → hasil jadi `Artifact`,
+animasi status karakter via `agent:event`. Persistensi: MySQL.
+
+### Catatan teknis
+- **DB:** MySQL/MariaDB (`mysql2`). Store **async**. Skema dibuat saat start (`ConfigStore.init`).
+- **Skill `write_content`:** menghasilkan konten nyata via 9Router (non-risky, tanpa approval).
+- **Dispatch:** `POST /api/agents/:agentId/directives {"text":"…"}` balas **202** + `{directive, task}`;
+  loop jalan di latar belakang (emit `agent:event`), hasil final disimpan jadi `Artifact`,
+  status Task → `done` (atau `awaiting_approval`/`blocked`).
+
+### Verifikasi cepat (logika, tanpa browser)
+```bash
+npm test    # 52 test — termasuk dispatch (mock 9Router), write_content, memory persist (MySQL)
+```
+> `tests/dispatch.test.ts` membuktikan alur directive→task→artifact + memory persisten + event status
+> **tanpa** 9Router hidup (router di-mock). Butuh MySQL hidup.
+
+### DoD Fase 2 — uji manual end-to-end (butuh 9Router hidup)
+**Prasyarat:** MySQL (XAMPP) hidup, **9Router hidup** di `NINEROUTER_BASE_URL` dengan minimal satu model
+(`NINEROUTER_MODEL_*`) yang mendukung chat. Tanpa 9Router, task akan jadi `blocked` (loop gagal di router).
+
+1. Terminal A: `npm run dev:server` → orchestrator `http://127.0.0.1:8787`.
+2. Terminal B: `npm run dev:web` → buka `http://localhost:5173`.
+3. Buat company → tambah lantai → tambah departemen Marketing (template) → 5 karakter muncul.
+4. Tab **Kantor** → panel **Beri Arahan**: pilih karakter (mis. *Script Maker*), ketik arahan
+   (mis. *"Tulis caption promo diskon akhir pekan"*) → **Kirim arahan**.
+5. **Lolos bila:** karakter **berdenyut** (status working) saat bekerja lalu kembali idle; di tab
+   **Task Board** muncul task `Selesai` dengan tombol **Lihat konten** → menampilkan **konten asli AI**
+   (via 9Router). Reload → task & konten tetap ada (persisten di MySQL).
+
+> Smoke tanpa 9Router (hanya validasi pipeline): langkah 1–4 tetap membuat Directive+Task; task
+> berakhir `blocked` (router mati). Buktikan REST: `POST /api/agents/:id/directives` balas 202 lalu
+> `GET /api/companies/:id/tasks` menampilkan task tersebut.
+
+---
+
 ## Menjalankan Codex (review & bug hunt)
 
 > Codex = **Reviewer & Bug Hunter** (lihat `AGENTS.md`). Ia membaca `AGENTS.md` otomatis;
@@ -136,8 +192,9 @@ codex --version                  # pastikan terpasang
 
 **Jalankan review fase berjalan** (tulis temuan ke `docs/BUGLIST.md` & `docs/CODE_REVIEW.md`):
 ```bash
-npm run review:codex     # bug hunt + temuan kualitas + verifikasi entri FIXED
-npm run verify:codex     # khusus: verifikasi ulang entri BUGLIST berstatus FIXED
+npm run review:codex      # review diff fase berjalan (bug hunt + kualitas + verifikasi FIXED)
+npm run review:codex:all  # SWEEP MENYELURUH Phase 0–2 (seluruh kode, fokus migrasi MySQL + runtime)
+npm run verify:codex      # khusus: verifikasi ulang entri BUGLIST berstatus FIXED
 ```
 
 Atau **interaktif** (supaya bisa diawasi langkah demi langkah):
@@ -154,9 +211,13 @@ yang hanya mengizinkan tulis ke dua file itu (lihat catatan setup di `AGENTS.md`
 > Flag CLI bisa beda antar versi Codex; sesuaikan `-s/--sandbox` bila perlu. Bila perintah `codex`
 > belum ada di PATH, `npm run review:codex` akan gagal dengan "command not found" — pasang dulu (di atas).
 
-**Status review saat ini:** Phase 1 di-review sebagai self-review Claude (Codex belum terpasang di
-environment build). `docs/BUGLIST.md` berisi `BUG-101..105` (FIXED) yang **menunggu verifikasi Codex**;
-`docs/CODE_REVIEW.md` berisi `CR-101..108` (OPEN). Jalankan `npm run verify:codex` untuk memverifikasi.
+**Status review saat ini (2026-06-13):** Phase 0 ✅ & Phase 1 ✅ **sudah direview Codex** (review Phase 1
+menghasilkan BUG-106..109 + CR-109; mayoritas FIXED & dibersihkan, tersisa `BUG-107`/`BUG-108` + `CR-101`
+= keputusan strategi auth web/socket, **bukan** review tertunda). Yang **belum** direview: **Phase 2**
+(runtime/dispatch/animasi) + **migrasi DB ke MySQL (store async)** yang menyentuh kode Phase 0–1.
+Karena migrasi lintas-fase itu, review berikutnya = **sweep menyeluruh Phase 0–2**: `npm run review:codex:all`
+(fokus utama Phase 2 + migrasi MySQL, sekalian cek regresi async di kode lama). Jalankan sweep untuk temuan baru
+(dialek SQL MySQL, async/await store, dispatch directive, event animasi).
 
 ---
 

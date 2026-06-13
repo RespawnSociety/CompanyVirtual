@@ -8,10 +8,19 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import type { WorldSnapshot } from "@vc/shared";
+import type { AgentEvent, WorldSnapshot } from "@vc/shared";
 import { bootGame, type GameHandle } from "../game/bootGame.js";
+import { DirectiveComposer } from "./DirectiveComposer.js";
 
-export function WorldView({ world }: { world: WorldSnapshot | null }): JSX.Element {
+export function WorldView({
+  world,
+  agentEvent,
+  onDirectiveSent,
+}: {
+  world: WorldSnapshot | null;
+  agentEvent?: AgentEvent | null;
+  onDirectiveSent?: () => void;
+}): JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const handleRef = useRef<GameHandle | null>(null);
   const [floorId, setFloorId] = useState<string>("");
@@ -52,6 +61,12 @@ export function WorldView({ world }: { world: WorldSnapshot | null }): JSX.Eleme
     handleRef.current?.getScene()?.applyWorld(world, floorId || undefined);
   }, [world, floorId]);
 
+  // Phase 2.4: event agent → animasi status sprite (working berdenyut, dst).
+  useEffect(() => {
+    if (!agentEvent || agentEvent.type !== "status") return;
+    handleRef.current?.getScene()?.setAgentStatus(agentEvent.agentId, agentEvent.status);
+  }, [agentEvent]);
+
   const agentCount = world
     ? world.agents.filter((a) => {
         const dept = world.departments.find((d) => d.id === a.departmentId);
@@ -85,6 +100,9 @@ export function WorldView({ world }: { world: WorldSnapshot | null }): JSX.Eleme
             Klik <b>karakter</b> untuk memilih, lalu klik <b>petak lantai</b> untuk menyuruhnya
             berjalan (pathfinding menghindari dinding).
           </p>
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <DirectiveComposer world={world} {...(onDirectiveSent ? { onSent: onDirectiveSent } : {})} />
         </div>
       </div>
     </div>

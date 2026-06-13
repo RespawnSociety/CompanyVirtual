@@ -5,10 +5,12 @@
 
 import type {
   AgentProfile,
+  Artifact,
   CommsMessage,
   Company,
   Department,
   DepartmentTemplate,
+  Directive,
   Floor,
   Guardrail,
   ModelPolicy,
@@ -70,6 +72,8 @@ export const api = {
     req<{ deleted: boolean }>(`/companies/${id}`, { method: "DELETE" }),
   getWorld: (id: string) => req<WorldSnapshot>(`/companies/${id}/world`),
   listTasks: (id: string) => req<Task[]>(`/companies/${id}/tasks`),
+  listArtifacts: (id: string) => req<Artifact[]>(`/companies/${id}/artifacts`),
+  listDirectives: (id: string) => req<Directive[]>(`/companies/${id}/directives`),
   listComms: (id: string) => req<CommsMessage[]>(`/companies/${id}/comms`),
 
   // Floor
@@ -110,6 +114,13 @@ export const api = {
   updateAgent: (id: string, patch: Partial<NewAgentInput & { status: AgentProfile["status"] }>) =>
     req<AgentProfile>(`/agents/${id}`, { method: "PATCH", ...body(patch) }),
   deleteAgent: (id: string) => req<{ deleted: boolean }>(`/agents/${id}`, { method: "DELETE" }),
+
+  // Directive → Task → Agent (Phase 2.3): kirim arahan ke satu karakter.
+  sendDirective: (agentId: string, text: string) =>
+    req<{ directive: Directive; task: Task }>(`/agents/${agentId}/directives`, {
+      method: "POST",
+      ...body({ text }),
+    }),
 };
 
 /** Field form Character Editor (kirim ke createAgent/updateAgent). */

@@ -1,21 +1,20 @@
 /**
- * Entry orchestrator (Phase 0) — start HTTP server dengan WhatsApp relay + owner auth.
+ * Entry orchestrator — start HTTP server: WhatsApp relay + owner auth (Phase 0),
+ * Configuration layer REST + realtime (Phase 1), runtime directive dispatch (Phase 2).
  *
- * Membaca konfigurasi dari env (lihat .env.example). Adapter dipilih via WA_ADAPTER:
- *   - "mock"  : tidak kirim ke WhatsApp nyata (pesan keluar dicatat di log). Untuk uji lokal.
- *   - "cloud" : WhatsApp Cloud API resmi (butuh kredensial).
+ * Persistensi: MySQL/MariaDB (XAMPP) via `mysql2` — lihat .env (DB_MYSQL_*). Database harus
+ * sudah dibuat (mis. `CREATE DATABASE virtual_company`).
  *
- * Jalankan: `npm run -w @vc/server dev`  (atau lewat infra/scripts).
+ * Adapter WhatsApp via WA_ADAPTER: "mock" (uji lokal) | "cloud" (Cloud API resmi).
+ * Jalankan: `npm run -w @vc/server dev`.
  */
 
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
 import type { Id, VaultReader } from "@vc/shared";
 import {
-  InMemoryMemoryStore,
   SkillRegistry,
   createRouterFromEnv,
   createWebSearchSkill,
+  createWriteContentSkill,
 } from "@vc/agent-runtime";
 import { CloudApiAdapter } from "./comms/cloudAdapter.js";
 import { MockWhatsAppAdapter } from "./comms/mockAdapter.js";
@@ -23,7 +22,8 @@ import { ownerAuthFromEnv } from "./comms/ownerAuth.js";
 import { WaRelay } from "./comms/relay.js";
 import type { ChannelAdapter } from "./comms/types.js";
 import { createAgentReplyHandler, makeFrontDeskManager } from "./comms/frontDesk.js";
-import { ConfigStore } from "./db/store.js";
+import { ConfigStore, mysqlConfigFromEnv } from "./db/store.js";
+import { DirectiveDispatcher } from "./registry/dispatcher.js";
 import { RealtimeHub } from "./realtime.js";
 import { buildServer } from "./server.js";
 
@@ -56,18 +56,34 @@ async function main(): Promise<void> {
     );
   }
 
-  // Runtime deps untuk handler auto-reply.
-  // CR-003: pilih provider web_search via env (default mock). Provider nyata = Phase 4+;
-  // bila diminta sekarang, gagal start dengan pesan jelas (jangan diam-diam pakai mock).
+  // Runtime deps. CR-003: pilih provider web_search via env (default mock); provider nyata =
+  // Phase 4+. write_content (Phase 2.2) menghasilkan konten nyata via 9Router.
   const searchMode = (env.WEB_SEARCH_MODE ?? "mock").toLowerCase();
   if (searchMode !== "mock") {
     throw new Error(
       `WEB_SEARCH_MODE='${searchMode}' belum didukung (provider nyata = Phase 4+). Pakai 'mock' atau biarkan kosong.`,
     );
   }
-  const skills = new SkillRegistry().register(createWebSearchSkill());
-  const memory = new InMemoryMemoryStore();
+  const skills = new SkillRegistry().registerAll([
+    createWebSearchSkill(),
+    createWriteContentSkill(),
+  ]);
   const router = createRouterFromEnv(env);
+
+  // Configuration layer + runtime persistence (MySQL/MariaDB).
+  const dbConfig = mysqlConfigFromEnv(env);
+  let store: ConfigStore;
+  try {
+    store = await ConfigStore.create(dbConfig);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Gagal konek MySQL (${dbConfig.host}:${dbConfig.port}/${dbConfig.database}): ${detail}. ` +
+        "Pastikan MySQL (XAMPP) hidup & database sudah dibuat. Lihat docs/RUNBOOK.md.",
+    );
+  }
+  const memory = store.createMemoryStore();
+
   const manager = makeFrontDeskManager();
   const handler = createAgentReplyHandler(manager, {
     router,
@@ -77,7 +93,7 @@ async function main(): Promise<void> {
     emit: (e) => console.log(`[event] ${e.type} agent=${e.agentId}`),
   });
 
-  // Pilih adapter.
+  // Pilih adapter WhatsApp.
   const adapterMode = (env.WA_ADAPTER ?? "mock").toLowerCase();
   let adapter: ChannelAdapter;
   let cloud: CloudApiAdapter | undefined;
@@ -89,7 +105,6 @@ async function main(): Promise<void> {
       ...(env.WA_CLOUD_GRAPH_VERSION ? { graphVersion: env.WA_CLOUD_GRAPH_VERSION } : {}),
     });
     adapter = cloud;
-    // CR-003: di mode cloud owner bisa menerima "hasil pencarian" yang sebenarnya mock.
     console.warn(
       "[server] PERHATIAN: skill web_search masih MOCK (hasil contoh, bukan pencarian nyata). " +
         "Provider nyata = Phase 4+.",
@@ -105,21 +120,26 @@ async function main(): Promise<void> {
     unknownReply: "Maaf, nomor Anda tidak terdaftar untuk mengakses asisten perusahaan ini.",
   });
 
-  // Configuration layer (Phase 1): SQLite + REST + realtime.
-  const dbPath = env.DB_PATH ?? "data/vc.db";
-  if (dbPath !== ":memory:") mkdirSync(dirname(dbPath), { recursive: true });
-  const store = new ConfigStore(dbPath);
-
   // onMutate menutup atas hub realtime (hub di-set sebelum listen — lihat CR-108 di bawah).
+  // broadcastWorld async (MySQL) → fire-and-forget dengan catch agar mutasi tak menunggu socket.
   const realtimeRef: { hub?: RealtimeHub } = {};
-  const onMutate = (companyId: Id): void => realtimeRef.hub?.broadcastWorld(companyId);
+  const onMutate = (companyId: Id): void => {
+    void realtimeRef.hub?.broadcastWorld(companyId).catch((e) => console.error("[realtime]", e));
+  };
+
+  // Dispatcher directive → task → agent (Phase 2.3). Emit event ke hub (animasi 2.4).
+  const dispatcher = new DirectiveDispatcher({
+    store,
+    router,
+    skills,
+    memory,
+    emitAgentEvent: (companyId, event) => realtimeRef.hub?.emitAgentEvent(companyId, event),
+  });
 
   const host = env.SERVER_HOST ?? "127.0.0.1";
   const port = Number(env.SERVER_PORT ?? 8787);
 
   // CR-101: REST `/api/*` tak punya auth sendiri. Token bearer (API_AUTH_TOKEN) menutupnya.
-  // Bila server di-bind ke alamat non-loopback (terjangkau jaringan) TANPA token → tolak start
-  // (least-privilege, plan §8). Lokal (127.0.0.1/::1) tanpa token tetap boleh untuk dev.
   const apiAuthToken = env.API_AUTH_TOKEN?.trim() || undefined;
   if (!apiAuthToken && !isLoopbackHost(host)) {
     throw new Error(
@@ -138,19 +158,19 @@ async function main(): Promise<void> {
     relay,
     configStore: store,
     onMutate,
+    dispatcher,
     ...(cloud ? { cloud } : {}),
     ...(env.WEB_ORIGIN ? { corsOrigin: env.WEB_ORIGIN } : {}),
     ...(apiAuthToken ? { apiAuthToken } : {}),
   });
 
-  // CR-108: buat hub SEBELUM listen agar tidak ada celah di mana mutasi → broadcast no-op
-  // (app.server sudah ada sejak Fastify dibangun; socket.io boleh attach sebelum listen).
+  // CR-108: buat hub SEBELUM listen agar tidak ada celah mutasi → broadcast no-op.
   realtimeRef.hub = new RealtimeHub(app.server, store, env.WEB_ORIGIN ?? true);
 
   await app.listen({ host, port });
   console.log(`[server] listening http://${host}:${port}`);
   console.log(
-    `[server] adapter=${adapterMode} owners=${ownerAuth.size} db=${dbPath} apiAuth=${apiAuthToken ? "on" : "off"}`,
+    `[server] adapter=${adapterMode} owners=${ownerAuth.size} db=mysql:${dbConfig.database} apiAuth=${apiAuthToken ? "on" : "off"}`,
   );
   console.log(`[server] webhook: ${host}:${port}/webhook/whatsapp`);
   console.log(`[server] REST config: ${host}:${port}/api/*  · realtime: socket.io`);

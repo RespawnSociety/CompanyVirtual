@@ -24,14 +24,17 @@
 | Fase | Tema | Status | Output utama |
 |---|---|---|---|
 | **0** | Foundations & Spikes | ✅ selesai (0.1–0.6 lolos; Codex verified) | 9Router + 1 agent loop + WA auto-reply |
-| **1** | Platform Shell + Company Setup | 🟡 implementasi selesai (1.1–1.8 ✓ build/lint/test) — menunggu Codex 1.9 | Kantor 2D + Company/Dept/Character editor |
-| **2** | Runtime + 1 Agent Nyata | ⬜ belum | Directive → agent kerja → Artifact |
+| **1** | Platform Shell + Company Setup | ✅ Codex-reviewed (1.1–1.9); sisa BUG-107/108 + CR-101 (auth) = keputusan owner | Kantor 2D + Company/Dept/Character editor |
+| **2** | Runtime + 1 Agent Nyata | 🟡 implementasi selesai (2.1–2.5 ✓ build/lint/test/smoke) — menunggu Codex 2.6 | Directive → agent kerja → Artifact |
 | **3** | Departemen Lengkap + Workflow Engine | ⬜ belum | Pipeline Marketing + Approval Gate |
 | **4** | Aksi Eksternal + Keamanan | ⬜ belum | Publish ke akun test + Vault + audit |
 | **5** | Platform Generalization | ⬜ belum | ≥2 departemen berjalan stabil |
 | **6** | App Packaging | ⬜ belum | Tauri desktop + web |
+| **7** | Memory Graph per Agent | ⬜ belum | Visualisasi graph memory (ala graphify.net) per karakter |
 
 Legenda: ⬜ belum · 🟡 jalan · ✅ selesai (DoD lolos + Codex verified)
+
+> **Catatan DB (2026-06-13):** persistensi pindah dari `node:sqlite` ke **MySQL/MariaDB (XAMPP)** via `mysql2` (keputusan owner). Store kini **async**. Lihat `docs/SPIKES.md` (Keputusan DB) & `docs/RUNBOOK.md` (setup).
 
 ---
 
@@ -63,18 +66,18 @@ Legenda: ⬜ belum · 🟡 jalan · ✅ selesai (DoD lolos + Codex verified)
 **Tujuan:** dunia 2D + seluruh layer konfigurasi data-driven (belum ada agent hidup).
 
 - [x] **1.1 Tilemap kantor** — Phaser 3 + Vite, load map Tiled (JSON), 1 lantai, karakter bisa jalan (pathfinding easystarjs), jam + HUD. → `apps/web/src/game/OfficeScene.ts`, map `apps/web/public/assets/maps/office.json`.
-- [x] **1.2 DB layer** — `node:sqlite` (tanpa native build) + `ConfigStore` repository untuk entitas `shared`. Save/load + cascade. → `apps/server/src/db/`.
+- [x] **1.2 DB layer** — `ConfigStore` repository untuk entitas `shared`. Save/load + cascade. → `apps/server/src/db/`. *(Awalnya `node:sqlite`; Phase 2 pindah ke **MySQL/MariaDB** via `mysql2` — store async. Lihat Catatan DB.)*
 - [x] **1.3 Company Setup (UI React)** — buat & namai company, branding (warna), tambah/hapus floor → tersimpan ke DB. → `apps/web/src/components/CompanySetup.tsx`.
 - [x] **1.4 Department Builder (UI)** — tambah departemen ke floor: dari template atau custom; atur purpose, skillPool. → `DepartmentBuilder.tsx`.
 - [x] **1.5 Character Editor (UI)** — form → `AgentProfile` (identitas, sprite, deskripsi→persona, skillScope, guardrails, deskPos, modelPolicy) → DB. → `CharacterEditor.tsx`.
 - [x] **1.6 Marketing template** — `packages/templates/marketing`: roleTemplates (Manager, Market Checker, Script Maker, Reviewer, Social Media), defaultSkills, defaultWorkflow. Seed lewat `seedDepartmentFromTemplate` (engine generik, workflow di-clone).
 - [x] **1.7 Task Board & Comms Viewer (dummy)** — tampilkan data placeholder (tabel/papan; data nyata mulai Phase 2/3). → `TaskBoard.tsx`, `CommsViewer.tsx`.
 - [x] **1.8 WS/REST bridge** — `FACE <-> ORCH`: REST `/api/*` (Fastify) + socket.io `RealtimeHub` (room per company; `world:sync` + jalur `agent:event` untuk animasi Phase 2). → `apps/server/src/api/routes.ts`, `realtime.ts`, `apps/web/src/{api,socket}.ts`.
-- [ ] **1.9 Codex review Phase 1** — fokus: konsistensi kontrak DB↔shared, tidak ada hardcode "marketing" di engine, validasi input REST, keamanan CORS. **(belum — langkah berikutnya)**
+- [x] **1.9 Codex review Phase 1** — **sudah** direview Codex (2026-06-11): menghasilkan BUG-106..109 + CR-109 + temuan auth. Mayoritas di-FIX & dibersihkan dari daftar aktif; **tersisa `BUG-107`/`BUG-108` + `CR-101`** = keputusan strategi auth web/socket (owner), bukan blocker review. Kode **migrasi DB ke MySQL** (Phase 2) dicek ulang di sweep 0–2.
 
 **DoD Fase 1:** buat company nama bebas → tambah dept Marketing dari template → karakter muncul di lantai & bisa jalan → semua config tersimpan & ter-load ulang.
 
-**Status build Phase 1:** `npm run build` ✅ · `npm run lint` ✅ · `npm run typecheck:web` ✅ · `npm run build:web` ✅ · `npm test` ✅ 43/43 (templates, db, seed, configApi + Phase 0). Smoke test live: REST company→floor→dept(template)→world (5 agent) + socket.io `world:sync` ✅. **Fase 1 belum ✅ — menunggu review Codex (1.9).**
+**Status build Phase 1:** `npm run build` ✅ · `npm run lint` ✅ · `npm run typecheck:web` ✅ · `npm run build:web` ✅ · `npm test` ✅ (kini 52/52 termasuk Phase 2). Smoke live: REST company→floor→dept(template)→world (5 agent) + socket.io `world:sync` ✅. **Fase 1: Codex sudah review (1.9 ✅).** Sisa item auth (BUG-107/108, CR-101) menunggu keputusan strategi auth — lihat `docs/BUGLIST.md`.
 
 ---
 
@@ -82,14 +85,16 @@ Legenda: ⬜ belum · 🟡 jalan · ✅ selesai (DoD lolos + Codex verified)
 
 **Tujuan:** satu karakter benar-benar hidup & menghasilkan output AI nyata.
 
-- [ ] **2.1 Registry karakter↔agent** — `apps/server/registry`: map `AgentProfile` → instance agent runtime.
-- [ ] **2.2 Skill `write_content`** — `agent-runtime/skills/write_content` (lewat 9Router).
-- [ ] **2.3 Directive → Task → Agent** — directive (UI/WA) → buat `Task` → dispatch ke 1 agent → agent loop kerja → hasil jadi `Artifact`.
-- [ ] **2.4 Animasi status** — event `working/idle/talking` menggerakkan sprite via event bus.
-- [ ] **2.5 Memory nyata** — short-term + long-term (`MemoryItem`) per agent, retrieval recency+relevance (keyword dulu).
-- [ ] **2.6 Codex review Phase 2** — fokus: semua LLM lewat router (tak ada provider langsung), tidak ada panggilan LLM per-tick animasi.
+- [x] **2.1 Registry karakter↔agent** — `apps/server/src/registry/dispatcher.ts`: `DirectiveDispatcher` me-resolve `AgentProfile` dari ConfigStore (selalu fresh) → jalankan agent loop generik.
+- [x] **2.2 Skill `write_content`** — `agent-runtime/src/skills/writeContent.ts` (konten nyata via 9Router; non-risky). Terdaftar di `main.ts`, `KNOWN_SKILLS.implemented=true`.
+- [x] **2.3 Directive → Task → Agent** — `POST /api/agents/:agentId/directives` → buat `Directive`+`Task` → dispatch (latar belakang) → loop → hasil final jadi `Artifact`, status Task/Directive diperbarui. Endpoint balas 202.
+- [x] **2.4 Animasi status** — `agent:event` (socket.io) → `OfficeScene.setAgentStatus` (titik status + denyut saat working) + composer arahan di tab Kantor + Task Board live (refetch saat event).
+- [x] **2.5 Memory nyata** — `MysqlMemoryStore` persisten (tabel `memory_items`), retrieval recency+relevance (keyword) sama dengan InMemory; di-inject ke dispatcher.
+- [ ] **2.6 Codex review Phase 2** — fokus: semua LLM lewat router (tak ada provider langsung), tidak ada panggilan LLM per-tick animasi. **(menunggu — digabung sweep Codex 0–2)**
 
 **DoD Fase 2:** ketik arahan → karakter "bekerja" → konten asli AI (via 9Router) tersimpan & tampil di Task Board.
+
+**Status Phase 2:** `npm run build` ✅ · `npm run lint` ✅ · `npm run typecheck:web` ✅ · `npm run build:web` ✅ · `npm test` ✅ 52/52 (+ db/seed/configApi migrasi MySQL, dispatch/write_content/memory). Smoke live (MySQL, 9Router down): REST company→floor→dept(template)→directive→Task (202, lalu `blocked` saat router mati) + cascade delete ✅. **Konten AI nyata butuh 9Router hidup** (uji manual saat 9Router jalan). Menunggu sweep Codex 0–2 (2.6).
 
 ---
 
@@ -147,6 +152,23 @@ Legenda: ⬜ belum · 🟡 jalan · ✅ selesai (DoD lolos + Codex verified)
 - [ ] **6.4 Codex review final** — sweep keamanan & kebersihan menyeluruh.
 
 **DoD Fase 6:** dobel-klik app → service lokal hidup → platform jalan; juga jalan di browser.
+
+---
+
+## Phase 7 — Memory Graph per Agent 🧠🕸️
+
+**Tujuan:** tiap agent punya "otak" yang bisa dilihat — klik karakter → tampil **graph memory interaktif** ala [graphify.net](https://graphify.net/): node = ingatan (`MemoryItem`), edge = keterkaitan antar-ingatan. Memberi observability ke apa yang "diketahui" & "diingat" agent (plan §8: Agent Inspector).
+
+> Bergantung pada **memory nyata (2.5)** yang sudah persisten (MySQL `memory_items`). Phase ini menambah *relasi* antar memory + visualisasinya, bukan menyimpan memory dari nol.
+
+- [ ] **7.1 Model relasi memory** — turunkan edge antar `MemoryItem` (tambah kontrak `MemoryEdge`/`MemoryGraph` di `@vc/shared`): keterkaitan via tag bersama, co-occurrence keyword, dan rujukan eksplisit (task/directive yang sama). Bobot edge = kekuatan keterkaitan.
+- [ ] **7.2 Endpoint graph** — `GET /api/agents/:id/memory-graph` → `{ nodes: MemoryItem[], edges: MemoryEdge[] }` (di-scope per `memoryNamespace`). Batasi ukuran (top-N node by importance+recency) agar payload & render wajar.
+- [ ] **7.3 Graph view UI (force-directed)** — klik karakter di world 2D → buka panel **Memory Graph**: node bisa di-drag/zoom/pan, klik node → detail ingatan (kind, teks, tags, createdAt, importance). Visual ala graphify (kluster per tag/topik).
+- [ ] **7.4 Memory linking saat tulis** — saat agent menyimpan `MemoryItem` baru (di loop), hitung & simpan keterkaitan ke ingatan terkait (keyword dulu; embeddings via 9Router bila tersedia) → edge muncul live.
+- [ ] **7.5 (Opsional) Embeddings 9Router** — ganti keterkaitan keyword dengan kemiripan embedding untuk kluster yang lebih bermakna; tetap lewat `agent-runtime/src/router` (tak ada provider langsung).
+- [ ] **7.6 Codex review Phase 7** — fokus: query graph efisien (tak N+1/tak muat-semua tanpa batas), retrieval konsisten dengan memory store, tak ada panggilan LLM per-render.
+
+**DoD Fase 7:** klik sebuah karakter → muncul graph memory-nya yang interaktif (node ingatan + edge keterkaitan), bisa zoom/pan/klik node untuk detail; graph ter-update saat agent memperoleh ingatan baru.
 
 ---
 

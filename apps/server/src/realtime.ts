@@ -37,15 +37,20 @@ export class RealtimeHub {
         const stale = [...socket.rooms].filter((r) => r.startsWith("company:") && r !== target);
         for (const r of stale) void socket.leave(r);
         void socket.join(target);
-        const snap = this.store.getWorldSnapshot(companyId);
-        if (snap) socket.emit("world:sync", snap);
+        // Store async (MySQL): ambil snapshot lalu emit; error di-log, tak menjatuhkan socket.
+        void this.store
+          .getWorldSnapshot(companyId)
+          .then((snap) => {
+            if (snap) socket.emit("world:sync", snap);
+          })
+          .catch(() => {});
       });
     });
   }
 
   /** Kirim ulang snapshot company ke semua subscriber-nya (dipanggil setelah mutasi config). */
-  broadcastWorld(companyId: Id): void {
-    const snap = this.store.getWorldSnapshot(companyId);
+  async broadcastWorld(companyId: Id): Promise<void> {
+    const snap = await this.store.getWorldSnapshot(companyId);
     if (snap) this.io.to(room(companyId)).emit("world:sync", snap);
   }
 
