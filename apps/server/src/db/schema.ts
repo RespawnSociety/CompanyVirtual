@@ -116,6 +116,25 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
     CONSTRAINT fk_artifacts_task FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
   ) ${TABLE_OPTS}`,
 
+  `CREATE TABLE IF NOT EXISTS workflow_runs (
+    id              VARCHAR(64) PRIMARY KEY,
+    company_id      VARCHAR(64) NULL,
+    directive_id    VARCHAR(64) NOT NULL,
+    department_id   VARCHAR(64) NOT NULL,
+    workflow_id     VARCHAR(64) NOT NULL,
+    status          VARCHAR(32) NOT NULL,
+    current_step_id VARCHAR(64) NULL,
+    step_artifacts  LONGTEXT NOT NULL,
+    approval_id     VARCHAR(64) NULL,
+    review_rounds   INT NOT NULL,
+    created_at      BIGINT NOT NULL,
+    updated_at      BIGINT NOT NULL,
+    INDEX idx_wfruns_directive (directive_id),
+    INDEX idx_wfruns_company (company_id),
+    INDEX idx_wfruns_approval (approval_id),
+    CONSTRAINT fk_wfruns_company FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+  ) ${TABLE_OPTS}`,
+
   `CREATE TABLE IF NOT EXISTS comms_messages (
     id          VARCHAR(64) PRIMARY KEY,
     thread_id   VARCHAR(64) NOT NULL,

@@ -15,6 +15,9 @@ import {
   createRouterFromEnv,
   createWebSearchSkill,
   createWriteContentSkill,
+  createReviewContentSkill,
+  createMarketResearchSkill,
+  createWebFetchSkill,
 } from "@vc/agent-runtime";
 import { CloudApiAdapter } from "./comms/cloudAdapter.js";
 import { MockWhatsAppAdapter } from "./comms/mockAdapter.js";
@@ -24,6 +27,7 @@ import type { ChannelAdapter } from "./comms/types.js";
 import { createAgentReplyHandler, makeFrontDeskManager } from "./comms/frontDesk.js";
 import { ConfigStore, mysqlConfigFromEnv } from "./db/store.js";
 import { DirectiveDispatcher } from "./registry/dispatcher.js";
+import { WorkflowEngine } from "./workflow/engine.js";
 import { RealtimeHub } from "./realtime.js";
 import { buildServer } from "./server.js";
 
@@ -67,6 +71,9 @@ async function main(): Promise<void> {
   const skills = new SkillRegistry().registerAll([
     createWebSearchSkill(),
     createWriteContentSkill(),
+    createReviewContentSkill(),
+    createMarketResearchSkill(),
+    createWebFetchSkill(),
   ]);
   const router = createRouterFromEnv(env);
 
@@ -128,13 +135,12 @@ async function main(): Promise<void> {
   };
 
   // Dispatcher directive → task → agent (Phase 2.3). Emit event ke hub (animasi 2.4).
-  const dispatcher = new DirectiveDispatcher({
-    store,
-    router,
-    skills,
-    memory,
-    emitAgentEvent: (companyId, event) => realtimeRef.hub?.emitAgentEvent(companyId, event),
-  });
+  const emitAgentEvent = (companyId: Id, event: Parameters<RealtimeHub["emitAgentEvent"]>[1]): void => {
+    realtimeRef.hub?.emitAgentEvent(companyId, event);
+  };
+  const dispatcher = new DirectiveDispatcher({ store, router, skills, memory, emitAgentEvent });
+  // Workflow engine (Phase 3): pipeline departemen + approval gate.
+  const workflowEngine = new WorkflowEngine({ store, router, skills, memory, emitAgentEvent });
 
   const host = env.SERVER_HOST ?? "127.0.0.1";
   const port = Number(env.SERVER_PORT ?? 8787);
@@ -159,6 +165,7 @@ async function main(): Promise<void> {
     configStore: store,
     onMutate,
     dispatcher,
+    workflowEngine,
     ...(cloud ? { cloud } : {}),
     ...(env.WEB_ORIGIN ? { corsOrigin: env.WEB_ORIGIN } : {}),
     ...(apiAuthToken ? { apiAuthToken } : {}),

@@ -13,14 +13,16 @@ import { DepartmentBuilder } from "./components/DepartmentBuilder.js";
 import { CharacterEditor } from "./components/CharacterEditor.js";
 import { TaskBoard } from "./components/TaskBoard.js";
 import { CommsViewer } from "./components/CommsViewer.js";
+import { WorkflowPanel } from "./components/WorkflowPanel.js";
 
-type Tab = "world" | "company" | "departments" | "characters" | "tasks" | "comms";
+type Tab = "world" | "company" | "departments" | "characters" | "workflow" | "tasks" | "comms";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "world", label: "🏢 Kantor" },
   { id: "company", label: "Company" },
   { id: "departments", label: "Departemen" },
   { id: "characters", label: "Karakter" },
+  { id: "workflow", label: "Workflow" },
   { id: "tasks", label: "Task Board" },
   { id: "comms", label: "Comms" },
 ];
@@ -103,6 +105,7 @@ export function App(): JSX.Element {
         // Event lain (status/skill_end/message) memicu refetch ringan selama kerja berlangsung.
         if (
           e.type === "task_update" ||
+          e.type === "approval_requested" ||
           e.type === "status" ||
           e.type === "skill_end" ||
           e.type === "message"
@@ -191,6 +194,14 @@ export function App(): JSX.Element {
         )}
         {tab === "characters" && (
           <CharacterEditor world={world} skills={skills} reload={reload} />
+        )}
+        {tab === "workflow" && (
+          <WorkflowPanel
+            world={world}
+            companyId={companyId}
+            refreshTick={refreshTick}
+            onChanged={() => setRefreshTick((t) => t + 1)}
+          />
         )}
         {tab === "tasks" && <TaskBoard companyId={companyId} refreshTick={refreshTick} world={world} />}
         {tab === "comms" && <CommsViewer companyId={companyId} />}

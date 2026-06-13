@@ -145,6 +145,36 @@ export interface WorkflowDef {
   steps: WorkflowStep[];
 }
 
+/** Status satu eksekusi workflow (run) untuk sebuah directive. */
+export type WorkflowRunStatus =
+  | "running"
+  | "awaiting_approval"
+  | "done"
+  | "blocked"
+  | "cancelled";
+
+/**
+ * Satu eksekusi `WorkflowDef` untuk sebuah directive (Phase 3). Dipersist agar bisa
+ * di-pause di `approval_gate` lalu di-resume saat owner APPROVE/REVISI.
+ */
+export interface WorkflowRun {
+  id: Id;
+  directiveId: Id;
+  departmentId: Id;
+  workflowId: Id;
+  status: WorkflowRunStatus;
+  /** Step yang sedang/akan dijalankan (saat pause = step gate yang menunggu approval). */
+  currentStepId?: Id;
+  /** Hasil tiap step: stepId → artifactId (output mengalir ke step berikutnya). */
+  stepArtifacts: Record<Id, Id>;
+  /** ApprovalRequest aktif saat status `awaiting_approval`. */
+  approvalId?: Id;
+  /** Jumlah putaran revisi yang sudah terjadi (loop_until_pass). */
+  reviewRounds: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
 // ============================================================
 // Memory
 // ============================================================

@@ -13,6 +13,7 @@ import { type CloudApiAdapter, parseCloudWebhook } from "./comms/cloudAdapter.js
 import type { ConfigStore } from "./db/store.js";
 import { registerConfigRoutes } from "./api/routes.js";
 import type { DirectiveDispatcher } from "./registry/dispatcher.js";
+import type { WorkflowEngine } from "./workflow/engine.js";
 
 export interface BuildServerDeps {
   /** Relay WhatsApp (Phase 0). Opsional: server config-only (Phase 1) tak butuh. */
@@ -25,6 +26,8 @@ export interface BuildServerDeps {
   onMutate?: (companyId: Id) => void;
   /** Dispatcher directive → task → agent (Phase 2). Bila ada → endpoint directive aktif. */
   dispatcher?: DirectiveDispatcher;
+  /** Workflow engine (Phase 3). Bila ada → endpoint directive departemen + approval aktif. */
+  workflowEngine?: WorkflowEngine;
   /** Origin yang diizinkan CORS (default "*" untuk dev lokal). */
   corsOrigin?: string;
   /**
@@ -71,6 +74,7 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
     registerConfigRoutes(app, deps.configStore, {
       ...(deps.onMutate ? { onMutate: deps.onMutate } : {}),
       ...(deps.dispatcher ? { dispatcher: deps.dispatcher } : {}),
+      ...(deps.workflowEngine ? { workflowEngine: deps.workflowEngine } : {}),
     });
   }
 

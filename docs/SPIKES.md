@@ -174,6 +174,28 @@ Jalur HTTP/Cloud nyata: jalankan server lalu daftarkan webhook (lihat RUNBOOK).
   via `ConfigStore.createMemoryStore()`). Skor retrieval (recency+relevance+importance) identik dgn InMemory.
   Embeddings = Phase 7 (memory graph).
 
+## Phase 3 — keputusan teknis (workflow engine + approval)
+
+- **Engine generik, digerakkan token `next`** (`apps/server/src/workflow/engine.ts`). Tak ada cabang
+  per-departemen: perilaku murni dari `WorkflowDef`. `loop_until_pass` → step review; parse verdict
+  agent (`PASS`/`REVISI`) lalu loop balik ke step konten (indeks sebelum review) s/d `maxReviewRounds`
+  (default 2) untuk cegah loop tak henti; `approval_gate` → pause; `<id>` → lompat; tanpa `next` → akhir.
+- **Run dipersist (`workflow_runs`)** agar bisa pause di approval lalu resume (tahan restart). Konteks
+  antar-step **direkonstruksi dari `stepArtifacts`** (bukan state in-memory) → resume aman walau proses
+  restart. Tiap step = 1 Task + 1 Artifact (Task Board menampilkan seluruh pipeline).
+- **Role→agent by name** (`resolveAgentForRole`: cocokkan `agent.role` case-insensitive). Manager bisa
+  menjalankan >1 step (intake + approval). Output step mengalir ke step berikut sebagai konteks instruksi.
+- **Approval = pause/resume, bukan blocking di loop.** Engine membuat `approvalId`, set run
+  `awaiting_approval` + directive `awaiting_approval`, emit `approval_requested` + `message` (Manager
+  "wajah") ke owner. Resume lewat `POST /api/approvals/:approvalId` (UI). **WA inbound 2-arah** (owner
+  balas `APPROVE`/`REVISI` di WhatsApp) = lanjutan Phase 4 (butuh Cloud API hidup); jalur keputusan UI sudah lengkap.
+- **Publish = stub Phase 3.** Skill risky (`ig_post`/`schedule_post`) belum diregistrasi → agent Social
+  Media tak punya tool → balas teks (konfirmasi publish). Aksi eksternal nyata + approval-gate skill = Phase 4.
+- **Semua LLM tetap lewat `router`** (skill `review_content`/`market_research`/`write_content` memanggil
+  9Router). Tak ada panggilan LLM per-tick animasi. `maxReviewRounds` membatasi biaya loop revisi.
+- **Terbukti LIVE** (kr/claude-sonnet-4.5): directive caption diskon → pipeline penuh → review loop 2× →
+  approval pause → APPROVE → done; konten AI nyata. Unit test memakai MockRouterClient (deterministik).
+
 ## Kontrak yang dikunci di Phase 0
 
 - **`@vc/shared`** — sumber kebenaran tipe: data model (plan §9), `AgentEvent`, kontrak

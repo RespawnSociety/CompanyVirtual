@@ -15,8 +15,8 @@
 |---|---|---|---|---|
 | BUG-107 | `API_AUTH_TOKEN` membuat REST terlindungi, tetapi web client tidak pernah mengirim bearer | high | OPEN | `apps/web/src/api.ts:41`, `apps/server/src/server.ts:60` |
 | BUG-108 | Socket realtime tetap bisa mengambil `world:sync` tanpa auth saat REST sudah dilindungi token | high | OPEN | `apps/server/src/realtime.ts:33`, `apps/server/src/server.ts:60` |
-| BUG-110 | Task Board live bisa melewatkan status `done` dan artifact karena event dikirim sebelum persist selesai | medium | FIXED | `packages/agent-runtime/src/loop.ts:137`, `apps/server/src/registry/dispatcher.ts:132`, `apps/web/src/App.tsx:100` |
-| BUG-111 | Router error membuat task `blocked`, tetapi directive tetap `in_progress` | medium | FIXED | `apps/server/src/registry/dispatcher.ts:125`, `packages/shared/src/types.ts:173` |
+| BUG-110 | Task Board live bisa melewatkan status `done` dan artifact karena event dikirim sebelum persist selesai | medium | VERIFIED_FIXED | `packages/agent-runtime/src/loop.ts:137`, `apps/server/src/registry/dispatcher.ts:132`, `apps/web/src/App.tsx:100` |
+| BUG-111 | Router error membuat task `blocked`, tetapi directive tetap `in_progress` | medium | VERIFIED_FIXED | `apps/server/src/registry/dispatcher.ts:125`, `packages/shared/src/types.ts:173` |
 
 ---
 
@@ -144,7 +144,7 @@ Kosong sampai Claude menandai `FIXED`.
 
 ### BUG-110 - Task Board live bisa melewatkan status `done` dan artifact karena event dikirim sebelum persist selesai
 
-- **Status:** FIXED
+- **Status:** VERIFIED_FIXED
 - **Severity:** medium
 - **Category:** concurrency
 - **Location:** `packages/agent-runtime/src/loop.ts:137`, `packages/agent-runtime/src/loop.ts:184`, `apps/server/src/registry/dispatcher.ts:132`, `apps/server/src/registry/dispatcher.ts:139`, `apps/web/src/App.tsx:100`, `apps/web/src/components/TaskBoard.tsx:51`
@@ -217,13 +217,13 @@ Ditambah event POST-persist `task_update` di event bus:
 Gate: `npm test` 53/53, `lint`, `typecheck:web` hijau.
 
 **Catatan verifikasi perbaikan**
-Kosong sampai Codex memverifikasi.
+VERIFIED_FIXED 2026-06-13 oleh Codex. Pembacaan kode: `packages/shared/src/events.ts:73-78` menambahkan `AgentTaskUpdateEvent` (`type: "task_update"`, `taskId`, `status`) ke union `AgentEvent`; `apps/server/src/registry/dispatcher.ts:112-113` membuat `emitTaskUpdate`, dan memanggilnya setelah persist selesai di cabang `done` (`apps/server/src/registry/dispatcher.ts:138-147`), error (`apps/server/src/registry/dispatcher.ts:130-132`), awaiting approval (`apps/server/src/registry/dispatcher.ts:153-156`), dan review (`apps/server/src/registry/dispatcher.ts:161-163`). UI menaikkan `refreshTick` saat menerima `task_update` di `apps/web/src/App.tsx:100-113`. Observasi runtime: urutan happy path sekarang `...,"addArtifact","updateTask:done","event:task_update:done"`, jadi refetch andal terjadi setelah artifact dan status task tersimpan. Gate lulus: `npm run build`, `npm run lint`, `npx tsc -p apps/web/tsconfig.json --noEmit`, `npm test` (53 passed).
 
 ---
 
 ### BUG-111 - Router error membuat task `blocked`, tetapi directive tetap `in_progress`
 
-- **Status:** FIXED
+- **Status:** VERIFIED_FIXED
 - **Severity:** medium
 - **Category:** logic
 - **Location:** `apps/server/src/registry/dispatcher.ts:125`, `apps/server/src/registry/dispatcher.ts:126`, `packages/shared/src/types.ts:173`, `docs/RUNBOOK.md:165`
@@ -278,4 +278,4 @@ Probe dengan `DirectiveDispatcher`, router mock yang melempar `Error("router dow
 Gate: `npm test` 53/53, `lint`, `typecheck:web` hijau.
 
 **Catatan verifikasi perbaikan**
-Kosong sampai Codex memverifikasi.
+VERIFIED_FIXED 2026-06-13 oleh Codex. Pembacaan kode: `packages/shared/src/types.ts:203-209` menambahkan `"blocked"` ke `DirectiveStatus`, dan catch router/loop error di `apps/server/src/registry/dispatcher.ts:123-132` sekarang menulis task `blocked` lalu `updateDirectiveStatus(directive.id, "blocked")`. Observasi runtime dengan router mock yang melempar menghasilkan `{"outcome":"error","taskStatus":"blocked","directiveStatus":"blocked"}`. Test khusus ada di `tests/dispatch.test.ts:120-138`. Gate lulus: `npm run build`, `npm run lint`, `npx tsc -p apps/web/tsconfig.json --noEmit`, `npm test` (53 passed).

@@ -18,6 +18,7 @@ export type {
   NewDirective,
   NewTask,
   NewArtifact,
+  NewWorkflowRun,
 } from "./db/store.js";
 export { MysqlMemoryStore } from "./db/memoryStore.js";
 export { registerConfigRoutes } from "./api/routes.js";
@@ -35,3 +36,11 @@ export type {
   DispatchResult,
   DispatchOutcome,
 } from "./registry/dispatcher.js";
+
+// Workflow engine (Phase 3)
+export { WorkflowEngine } from "./workflow/engine.js";
+export type {
+  WorkflowEngineDeps,
+  StartWorkflowResult,
+  ApprovalDecision,
+} from "./workflow/engine.js";

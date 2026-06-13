@@ -18,12 +18,15 @@ import type { ConfigStore, NewAgent } from "../db/store.js";
 import { seedDepartmentFromTemplate } from "../config/seed.js";
 import { KNOWN_SKILLS } from "../config/skills.js";
 import type { DirectiveDispatcher } from "../registry/dispatcher.js";
+import type { WorkflowEngine } from "../workflow/engine.js";
 
 export interface ConfigRoutesOptions {
   /** Dipanggil dengan companyId terdampak setelah mutasi sukses (untuk broadcast realtime). */
   onMutate?: (companyId: Id) => void;
   /** Dispatcher directive → task → agent (Phase 2). Bila absent, endpoint directive 503. */
   dispatcher?: DirectiveDispatcher;
+  /** Workflow engine (Phase 3). Bila absent, endpoint directive departemen + approval 503. */
+  workflowEngine?: WorkflowEngine;
 }
 
 function bad(reply: FastifyReply, msg: string): FastifyReply {
@@ -365,5 +368,52 @@ export function registerConfigRoutes(
     const { id } = req.params as { id: string };
     if (!(await store.getTask(id))) return notFound(reply, `Task tidak ditemukan: ${id}`);
     return store.listArtifactsByTask(id);
+  });
+
+  // ---------------- Workflow (Phase 3) ----------------
+
+  app.get("/api/companies/:id/runs", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!(await store.getCompany(id))) return notFound(reply, `Company tidak ditemukan: ${id}`);
+    return store.listWorkflowRunsByCompany(id);
+  });
+
+  // Kirim arahan ke DEPARTEMEN → jalankan workflow pipeline (semua role). Balas 202.
+  app.post("/api/departments/:departmentId/directives", async (req, reply) => {
+    if (!opts.workflowEngine) {
+      return reply.code(503).send({ error: "workflow engine tidak aktif (runtime Phase 3 belum dipasang)" });
+    }
+    const { departmentId } = req.params as { departmentId: string };
+    const dept = await store.getDepartment(departmentId);
+    if (!dept) return notFound(reply, `Department tidak ditemukan: ${departmentId}`);
+    if (!(await opts.workflowEngine.departmentHasWorkflow(departmentId))) {
+      return bad(reply, `Department '${dept.name}' belum punya workflow. Seed dari template atau set workflowId.`);
+    }
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const text = asStr(body["text"]);
+    if (!text) return bad(reply, "Field 'text' (arahan) wajib diisi.");
+
+    const started = await opts.workflowEngine.startForDepartment(departmentId, text, "ui");
+    notify(dept.companyId);
+    return reply.code(202).send({ directive: started.directive, run: started.run });
+  });
+
+  // Resume approval (APPROVE / REVISI) dari UI.
+  app.post("/api/approvals/:approvalId", async (req, reply) => {
+    if (!opts.workflowEngine) {
+      return reply.code(503).send({ error: "workflow engine tidak aktif" });
+    }
+    const { approvalId } = req.params as { approvalId: string };
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const decisionRaw = asStr(body["decision"]);
+    if (decisionRaw !== "approve" && decisionRaw !== "revise") {
+      return bad(reply, "Field 'decision' harus 'approve' atau 'revise'.");
+    }
+    const note = asStr(body["note"]);
+    const run = await opts.workflowEngine.resumeByApproval(approvalId, decisionRaw, note);
+    if (!run) return notFound(reply, `Tidak ada run menunggu approval: ${approvalId}`);
+    const runDept = await store.getDepartment(run.departmentId);
+    notify(runDept?.companyId);
+    return reply.code(202).send({ run });
   });
 }

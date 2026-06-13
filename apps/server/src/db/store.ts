@@ -26,6 +26,8 @@ import type {
   ModelPolicy,
   Vec2,
   WorkflowDef,
+  WorkflowRun,
+  WorkflowRunStatus,
   WorldSnapshot,
   Task,
   TaskStatus,
@@ -92,6 +94,15 @@ export interface NewArtifact {
   kind: string;
   content: string;
   meta?: Record<string, unknown>;
+}
+
+/** Input pembuatan workflow run (Phase 3). */
+export interface NewWorkflowRun {
+  companyId: Id;
+  directiveId: Id;
+  departmentId: Id;
+  workflowId: Id;
+  currentStepId?: Id;
 }
 
 /** Input pembuatan/replace agent (id auto bila tak diberi). */
@@ -769,6 +780,105 @@ export class ConfigStore {
     const meta = parseJson<Record<string, unknown> | null>(r["meta"], null);
     if (meta) artifact.meta = meta;
     return artifact;
+  }
+
+  // ---------------- WorkflowRun (Phase 3) ----------------
+
+  async createWorkflowRun(input: NewWorkflowRun, now = Date.now()): Promise<WorkflowRun> {
+    const id = defaultGenId("run");
+    await this.run(
+      "INSERT INTO workflow_runs (id, company_id, directive_id, department_id, workflow_id, status, current_step_id, step_artifacts, approval_id, review_rounds, created_at, updated_at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        id,
+        input.companyId,
+        input.directiveId,
+        input.departmentId,
+        input.workflowId,
+        "running",
+        input.currentStepId ?? null,
+        JSON.stringify({}),
+        null,
+        0,
+        now,
+        now,
+      ],
+    );
+    return (await this.getWorkflowRun(id))!;
+  }
+
+  async getWorkflowRun(id: Id): Promise<WorkflowRun | undefined> {
+    const row = await this.one("SELECT * FROM workflow_runs WHERE id = ?", [id]);
+    return row ? this.rowToWorkflowRun(row) : undefined;
+  }
+
+  /** Cari run yang sedang menunggu approval tertentu (untuk resume APPROVE/REVISI). */
+  async findWorkflowRunByApproval(approvalId: Id): Promise<WorkflowRun | undefined> {
+    const row = await this.one("SELECT * FROM workflow_runs WHERE approval_id = ?", [approvalId]);
+    return row ? this.rowToWorkflowRun(row) : undefined;
+  }
+
+  async updateWorkflowRun(
+    id: Id,
+    patch: {
+      status?: WorkflowRunStatus;
+      currentStepId?: Id | null;
+      stepArtifacts?: Record<Id, Id>;
+      approvalId?: Id | null;
+      reviewRounds?: number;
+    },
+    now = Date.now(),
+  ): Promise<WorkflowRun | undefined> {
+    const cur = await this.getWorkflowRun(id);
+    if (!cur) return undefined;
+    const next = {
+      status: patch.status ?? cur.status,
+      currentStepId:
+        patch.currentStepId !== undefined ? patch.currentStepId || null : cur.currentStepId ?? null,
+      stepArtifacts: patch.stepArtifacts ?? cur.stepArtifacts,
+      approvalId: patch.approvalId !== undefined ? patch.approvalId || null : cur.approvalId ?? null,
+      reviewRounds: patch.reviewRounds ?? cur.reviewRounds,
+    };
+    await this.run(
+      "UPDATE workflow_runs SET status = ?, current_step_id = ?, step_artifacts = ?, approval_id = ?, review_rounds = ?, updated_at = ? WHERE id = ?",
+      [
+        next.status,
+        next.currentStepId,
+        JSON.stringify(next.stepArtifacts),
+        next.approvalId,
+        next.reviewRounds,
+        now,
+        id,
+      ],
+    );
+    return this.getWorkflowRun(id);
+  }
+
+  async listWorkflowRunsByCompany(companyId: Id): Promise<WorkflowRun[]> {
+    const rows = await this.all(
+      "SELECT * FROM workflow_runs WHERE company_id = ? ORDER BY created_at, id",
+      [companyId],
+    );
+    return rows.map((r) => this.rowToWorkflowRun(r));
+  }
+
+  private rowToWorkflowRun(r: Record<string, unknown>): WorkflowRun {
+    const run: WorkflowRun = {
+      id: r["id"] as Id,
+      directiveId: r["directive_id"] as Id,
+      departmentId: r["department_id"] as Id,
+      workflowId: r["workflow_id"] as Id,
+      status: r["status"] as WorkflowRunStatus,
+      stepArtifacts: parseJson<Record<Id, Id>>(r["step_artifacts"], {}),
+      reviewRounds: Number(r["review_rounds"]),
+      createdAt: Number(r["created_at"]),
+      updatedAt: Number(r["updated_at"]),
+    };
+    const currentStepId = r["current_step_id"] as string | null;
+    if (currentStepId) run.currentStepId = currentStepId;
+    const approvalId = r["approval_id"] as string | null;
+    if (approvalId) run.approvalId = approvalId;
+    return run;
   }
 
   // ---------------- Comms ----------------

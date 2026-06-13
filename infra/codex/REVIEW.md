@@ -45,7 +45,10 @@ Untuk tiap entri `BUGLIST` ber-status `FIXED`, baca kode terbaru di lokasinya:
 
 ---
 
-## Sweep menyeluruh Phase 0–2 (`npm run review:codex:all`)
+## Sweep menyeluruh Phase 0–3 (`npm run review:codex:all`)
+
+> **Tambahan Phase 3 (Workflow Engine):** tinjau juga `apps/server/src/workflow/engine.ts` + `apps/server/src/db` (tabel `workflow_runs`) + endpoint directive-departemen/approval (`apps/server/src/api/routes.ts`) + `apps/web/src/components/WorkflowPanel.tsx`. Fokus: engine **data-driven** (token `loop_until_pass`/`approval_gate`, TANPA cabang "marketing"); approval gate **tak bisa di-bypass** (run `awaiting_approval` benar-benar pause; resume hanya lewat `resumeByApproval`); `maxReviewRounds` mencegah loop revisi tak henti; konteks antar-step direkonstruksi dari `stepArtifacts` (resume aman); semua LLM lewat router; tak ada panggilan LLM per-tick. Verifikasi observasi: `tests/workflow.test.ts` + `npm test` (57 passed).
+
 
 > **Kenapa sweep penuh sekarang:** ada perubahan **lintas-fase** besar — (a) persistensi pindah dari
 > `node:sqlite` (sinkron) ke **MySQL/MariaDB via `mysql2`** (store **async**); (b) runtime baru:

@@ -17,6 +17,7 @@ import type {
   Task,
   Vec2,
   WorkflowDef,
+  WorkflowRun,
   WorldSnapshot,
 } from "@vc/shared";
 
@@ -120,6 +121,19 @@ export const api = {
     req<{ directive: Directive; task: Task }>(`/agents/${agentId}/directives`, {
       method: "POST",
       ...body({ text }),
+    }),
+
+  // Workflow departemen (Phase 3): arahan ke departemen → pipeline semua role.
+  sendDepartmentDirective: (departmentId: string, text: string) =>
+    req<{ directive: Directive; run: WorkflowRun }>(`/departments/${departmentId}/directives`, {
+      method: "POST",
+      ...body({ text }),
+    }),
+  listRuns: (companyId: string) => req<WorkflowRun[]>(`/companies/${companyId}/runs`),
+  resolveApproval: (approvalId: string, decision: "approve" | "revise", note?: string) =>
+    req<{ run: WorkflowRun }>(`/approvals/${approvalId}`, {
+      method: "POST",
+      ...body(note ? { decision, note } : { decision }),
     }),
 };
 

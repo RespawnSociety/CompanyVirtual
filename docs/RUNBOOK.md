@@ -179,6 +179,45 @@ npm test    # 52 test — termasuk dispatch (mock 9Router), write_content, memor
 
 ---
 
+## Phase 3 — Departemen Lengkap + Workflow Engine 🧩
+
+Arahan ke **departemen** → Workflow Engine generik menjalankan pipeline `WorkflowDef`:
+Manager → riset → tulis → review (loop revisi) → **approval gate (pause)** → publish. Approval
+di-resume lewat UI (APPROVE/REVISI). Engine **data-driven** (tak ada cabang "marketing").
+
+### Catatan teknis
+- **Engine:** `apps/server/src/workflow/engine.ts`. Token `next`: `<id>` (lompat), `loop_until_pass`
+  (review; REVISI → ulang step konten s/d `maxReviewRounds`=2; PASS → lanjut), `approval_gate`
+  (pause, persist `WorkflowRun`), tanpa `next` (step akhir).
+- **State:** tabel `workflow_runs` (status, currentStepId, stepArtifacts, approvalId, reviewRounds).
+  Konteks antar-step direkonstruksi dari artifact (tahan resume).
+- **Endpoint:** `POST /api/departments/:id/directives` (jalankan workflow, 202) ·
+  `POST /api/approvals/:approvalId {decision:"approve"|"revise", note?}` (resume) ·
+  `GET /api/companies/:id/runs`.
+- **Skills baru:** `review_content` (verdict PASS/REVISI), `market_research`, `web_fetch` (mock).
+
+### Verifikasi cepat (logika, tanpa 9Router)
+```bash
+npm test    # 57 test — termasuk tests/workflow.test.ts (pipeline, loop revisi, approval pause, resume)
+```
+
+### DoD Fase 3 — uji manual (butuh 9Router hidup)
+1. `npm run dev:server` + `npm run dev:web`. Pastikan `.env` punya `NINEROUTER_MODEL_SUBSCRIPTION`
+   (mis. `kr/claude-sonnet-4.5`) & 9Router hidup.
+2. Buat company → lantai → departemen **Marketing** (template). Tab **Workflow** → pilih departemen,
+   ketik arahan (mis. *"Buat caption IG promo diskon 30% akhir pekan, gaya santai"*) → **Jalankan workflow**.
+3. **Lolos bila:** Task Board terisi pipeline (Manager→Market Checker→Script Maker→Reviewer→…→Manager),
+   karakter beranimasi, lalu run **menunggu approval** (muncul di panel Workflow kanan).
+4. Klik **APPROVE** → publish jalan → run & directive `done`. Konten final = **AI nyata** (lihat artifact
+   di Task Board). Klik **REVISI** + alasan → pipeline mengulang dari step konten lalu minta approval lagi.
+
+> **Terbukti LIVE (2026-06-13):** arahan caption diskon 30% → pipeline jalan via `kr/claude-sonnet-4.5`,
+> review me-loop 2×, pause di approval, APPROVE → `done`, menghasilkan caption Instagram nyata.
+> Smoke tanpa browser: `POST /api/departments/:id/directives` → poll `GET /api/companies/:id/runs`
+> sampai `awaiting_approval` → `POST /api/approvals/:approvalId {"decision":"approve"}` → run `done`.
+
+---
+
 ## Menjalankan Codex (review & bug hunt)
 
 > Codex = **Reviewer & Bug Hunter** (lihat `AGENTS.md`). Ia membaca `AGENTS.md` otomatis;

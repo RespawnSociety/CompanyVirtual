@@ -17,11 +17,11 @@ export interface SkillCatalogEntry {
 
 export const KNOWN_SKILLS: readonly SkillCatalogEntry[] = [
   { name: "web_search", description: "Cari informasi di web.", implemented: true, risky: false },
-  { name: "web_fetch", description: "Ambil & baca isi sebuah URL.", implemented: false, risky: false },
+  { name: "web_fetch", description: "Ambil & baca isi sebuah URL.", implemented: true, risky: false },
   { name: "browser_do", description: "Kendalikan browser untuk riset/aksi.", implemented: false, risky: false },
-  { name: "market_research", description: "Riset tren/kompetitor/audiens/keyword.", implemented: false, risky: false },
+  { name: "market_research", description: "Riset tren/kompetitor/audiens/keyword.", implemented: true, risky: false },
   { name: "write_content", description: "Tulis konten (caption, script, thread, CTA).", implemented: true, risky: false },
-  { name: "review_content", description: "Review kualitas, brand voice, kepatuhan.", implemented: false, risky: false },
+  { name: "review_content", description: "Review kualitas, brand voice, kepatuhan.", implemented: true, risky: false },
   { name: "message_agent", description: "Kirim pesan/delegasi ke agent lain.", implemented: false, risky: false },
   { name: "ask_user", description: "Tanya/klarifikasi ke owner via WhatsApp.", implemented: false, risky: false },
   { name: "ig_post", description: "Publish ke Instagram (approval-gated).", implemented: false, risky: true },

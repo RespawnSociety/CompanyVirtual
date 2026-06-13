@@ -26,7 +26,7 @@
 | **0** | Foundations & Spikes | ✅ selesai (0.1–0.6 lolos; Codex verified) | 9Router + 1 agent loop + WA auto-reply |
 | **1** | Platform Shell + Company Setup | ✅ Codex-reviewed (1.1–1.9); sisa BUG-107/108 + CR-101 (auth) = keputusan owner | Kantor 2D + Company/Dept/Character editor |
 | **2** | Runtime + 1 Agent Nyata | 🟡 implementasi selesai (2.1–2.5 ✓ build/lint/test/smoke) — menunggu Codex 2.6 | Directive → agent kerja → Artifact |
-| **3** | Departemen Lengkap + Workflow Engine | ⬜ belum | Pipeline Marketing + Approval Gate |
+| **3** | Departemen Lengkap + Workflow Engine | 🟡 implementasi selesai (3.1–3.5 ✓ build/lint/test + smoke LIVE 9Router) — menunggu Codex 3.6 | Pipeline Marketing + Approval Gate |
 | **4** | Aksi Eksternal + Keamanan | ⬜ belum | Publish ke akun test + Vault + audit |
 | **5** | Platform Generalization | ⬜ belum | ≥2 departemen berjalan stabil |
 | **6** | App Packaging | ⬜ belum | Tauri desktop + web |
@@ -102,14 +102,16 @@ Legenda: ⬜ belum · 🟡 jalan · ✅ selesai (DoD lolos + Codex verified)
 
 **Tujuan:** seluruh role Marketing jalan sebagai pipeline data-driven + approval.
 
-- [ ] **3.1 Semua role Marketing sebagai agent** — Manager, Market Checker, Script Maker, Reviewer, Social Media (publish masih stub).
-- [ ] **3.2 Skills pendukung** — `web_search`, `web_fetch`, `market_research`, `review_content`, `message_agent`, `ask_user`.
-- [ ] **3.3 Generic Workflow Engine** — `apps/server/workflow`: baca `WorkflowDef` (data), eksekusi step, `loop_until_pass` (loop revisi), `approval_gate`. **Tanpa if-else per departemen.**
-- [ ] **3.4 Delegasi internal** — Manager → anggota via `message_agent`; Manager sebagai "wajah" balasan.
-- [ ] **3.5 WA relay 2 arah + Approval Gate** — threading per directive; approval inline (`APPROVE` / `REVISI: ...`); aksi berisiko pause sampai approve.
-- [ ] **3.6 Codex review Phase 3** — fokus: engine benar-benar data-driven, approval gate tak bisa di-bypass, threading benar.
+- [x] **3.1 Semua role Marketing sebagai agent** — engine me-resolve agent per `role` di departemen (`WorkflowEngine.resolveAgentForRole`); tiap step di-dispatch ke agent-nya. Publish (Social Media) = stub (skill risky belum diregistrasi → agent balas teks, Phase 4 isi nyata).
+- [x] **3.2 Skills pendukung** — `review_content` (verdict PASS/REVISI), `market_research`, `web_fetch` (mock) diimplementasi + diregistrasi (`KNOWN_SKILLS.implemented=true`). `message_agent`/`ask_user` belum (delegasi ditangani engine; tetap `implemented=false`).
+- [x] **3.3 Generic Workflow Engine** — `apps/server/src/workflow/engine.ts`: baca `WorkflowDef` (DATA), eksekusi step urut, token `loop_until_pass` (loop revisi ke step konten, cap `maxReviewRounds`) & `approval_gate` (pause + persist `WorkflowRun`). **Tanpa cabang "marketing".**
+- [x] **3.4 Delegasi internal** — engine mengoordinasi role→role (output mengalir antar-step via `stepArtifacts`/konteks); Manager step `request_approval` = "wajah" yang mengirim pesan minta approval ke owner.
+- [x] **3.5 Approval Gate + resume** — pause di `approval_gate` (run `awaiting_approval`), resume `APPROVE`/`REVISI` lewat `POST /api/approvals/:approvalId` (UI WorkflowPanel) + event `approval_requested`/`message` ke owner. *(Inbound WA `APPROVE`/`REVISI` 2-arah penuh = lanjutan Phase 4 saat Cloud API hidup; jalur keputusan lewat UI sudah lengkap.)*
+- [ ] **3.6 Codex review Phase 3** — fokus: engine benar-benar data-driven, approval gate tak bisa di-bypass, threading benar. **(menunggu)**
 
-**DoD Fase 3:** 1 directive mengalir lewat seluruh departemen → konten direview & dicek pasar → Manager minta approval via WA → keputusanmu menggerakkan langkah berikut.
+**DoD Fase 3:** 1 directive mengalir lewat seluruh departemen → konten direview & dicek pasar → Manager minta approval → keputusanmu menggerakkan langkah berikut.
+
+**Status Phase 3:** `npm test` ✅ 57/57 (+ `tests/workflow.test.ts`: pipeline penuh, loop revisi, approval pause, resume approve/revise) · `build`/`lint`/`typecheck:web`/`build:web` ✅. **Smoke LIVE via 9Router (kr/claude-sonnet-4.5):** arahan "caption promo diskon 30%" → pipeline Manager→riset→tulis→review (loop 2×)→approval → **konten AI nyata** → APPROVE → publish (stub) → run+directive `done` ✅. WA relay 2-arah inbound approve = lanjutan. Menunggu Codex 3.6.
 
 ---
 
