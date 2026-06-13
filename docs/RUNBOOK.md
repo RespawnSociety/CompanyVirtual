@@ -291,7 +291,8 @@ codex --version                  # pastikan terpasang
 **Jalankan review fase berjalan** (tulis temuan ke `docs/BUGLIST.md` & `docs/CODE_REVIEW.md`):
 ```bash
 npm run review:codex      # review diff fase berjalan (bug hunt + kualitas + verifikasi FIXED)
-npm run review:codex:all  # SWEEP MENYELURUH Phase 0–2 (seluruh kode, fokus migrasi MySQL + runtime)
+npm run review:codex:all  # SWEEP MENYELURUH Phase 0–3 (seluruh kode, fokus migrasi MySQL + runtime + workflow)
+npm run review:codex:p4   # REVIEW Phase 4 (keamanan): vault/guardrails/auth/audit/skill sosial + verifikasi BUG-107/108 & CR-101
 npm run verify:codex      # khusus: verifikasi ulang entri BUGLIST berstatus FIXED
 ```
 
