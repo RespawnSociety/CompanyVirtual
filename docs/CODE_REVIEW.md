@@ -6,6 +6,7 @@
 > Konvensi: prosa Bahasa Indonesia, identifier/file/path/data-model English.
 
 > **Catatan pembersihan 2026-06-13:** entri `VERIFIED` sudah dicek ulang dan dihapus dari daftar aktif. Yang tersisa hanya temuan yang masih perlu keputusan/perbaikan.
+> **Catatan sweep Phase 0-2 2026-06-13:** build, lint, web typecheck, dan `npm test` (52 passed) lulus. Temuan fungsional baru dicatat di `docs/BUGLIST.md` sebagai `BUG-110` dan `BUG-111`; tidak ada temuan kualitas-only baru yang cukup kuat untuk masuk file ini.
 
 ## Fokus penilaian
 Optimal? Clean? Ada duplikasi / over-engineering? Penamaan jelas? Konsisten dengan kontrak `packages/shared`?
@@ -17,7 +18,7 @@ Workflow data-driven (bukan hardcode)? Semua LLM lewat 9Router? Biaya/performa w
 ## Ringkasan
 | ID | Judul | Type | Severity | Status | Location |
 |---|---|---|---|---|---|
-| CR-101 | Arsitektur auth REST/web/realtime belum satu jalur | architecture/security | high | OPEN | `apps/server/src/server.ts`, `apps/server/src/realtime.ts`, `apps/web/src/api.ts` |
+| CR-101 | Arsitektur auth REST/web/realtime belum satu jalur | architecture/security | high | OPEN | `apps/server/src/server.ts:60`, `apps/server/src/realtime.ts:33`, `apps/web/src/api.ts:41` |
 
 ---
 
@@ -27,7 +28,7 @@ Workflow data-driven (bukan hardcode)? Semua LLM lewat 9Router? Biaya/performa w
 
 - **Type:** architecture / security
 - **Severity:** high
-- **Location:** `apps/server/src/server.ts:57`, `apps/server/src/main.ts:123`, `apps/server/src/realtime.ts:33`, `apps/web/src/api.ts:40`, `apps/web/src/socket.ts:33`
+- **Location:** `apps/server/src/server.ts:60`, `apps/server/src/main.ts:143`, `apps/server/src/realtime.ts:33`, `apps/web/src/api.ts:41`, `apps/web/src/socket.ts:33`
 - **Status:** OPEN
 
 **Temuan**

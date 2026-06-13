@@ -112,6 +112,30 @@ describe("Phase 2.1+2.3+2.5 — DirectiveDispatcher (directive → task → arti
     const statuses = events.filter((e) => e.type === "status").map((e) => (e as { status: string }).status);
     expect(statuses).toContain("working");
     expect(statuses).toContain("idle");
+
+    // BUG-110: event task_update POST-persist teremit dengan status `done` (sinyal andal UI).
+    expect(events.some((e) => e.type === "task_update" && e.status === "done")).toBe(true);
+  });
+
+  it("BUG-111: router error → task & directive sama-sama `blocked`", async () => {
+    const agent = await seedAgent(store);
+    const router = new MockRouterClient([
+      () => {
+        throw new Error("router down");
+      },
+    ]);
+    const dispatcher = new DirectiveDispatcher({
+      store,
+      router,
+      skills: new SkillRegistry().registerAll([createWriteContentSkill()]),
+      memory: store.createMemoryStore(),
+      emitAgentEvent: () => {},
+    });
+    const { directive, task, done } = await dispatcher.dispatchToAgent(agent.id, "halo", "ui");
+    const outcome = await done;
+    expect(outcome.status).toBe("error");
+    expect((await store.getTask(task.id))!.status).toBe("blocked");
+    expect((await store.getDirective(directive.id))!.status).toBe("blocked");
   });
 
   it("agent memanggil write_content → konten masuk transkrip, artifact dari balasan final", async () => {

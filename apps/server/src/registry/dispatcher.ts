@@ -106,7 +106,11 @@ export class DirectiveDispatcher {
     task: Task,
   ): Promise<DispatchOutcome> {
     const { store } = this.deps;
+    const now = this.deps.now ?? Date.now;
     const emit: EmitFn = (e) => this.deps.emitAgentEvent(companyId, e);
+    // BUG-110: sinyal POST-persist yang andal untuk UI (artifact & status sudah tersimpan).
+    const emitTaskUpdate = (t: Task): void =>
+      emit({ type: "task_update", agentId: agent.id, at: now(), taskId: t.id, status: t.status });
 
     let result: AgentLoopResult;
     try {
@@ -122,8 +126,10 @@ export class DirectiveDispatcher {
     } catch (err) {
       // Loop rethrow saat error (BUG-003: status sudah dikembalikan ke idle via event).
       const message = err instanceof Error ? err.message : String(err);
+      // BUG-111: task DAN directive jadi `blocked` (jangan tinggalkan directive `in_progress`).
       const updated = (await store.updateTask(task.id, { status: "blocked" })) ?? task;
-      await store.updateDirectiveStatus(directive.id, "in_progress");
+      await store.updateDirectiveStatus(directive.id, "blocked");
+      emitTaskUpdate(updated);
       return { status: "error", finalText: null, task: updated, error: message };
     }
 
@@ -138,6 +144,7 @@ export class DirectiveDispatcher {
       const updated =
         (await store.updateTask(task.id, { status: "done", outputRef: artifact.id })) ?? task;
       await store.updateDirectiveStatus(directive.id, "done");
+      emitTaskUpdate(updated);
       return { status: result.status, finalText: result.finalText, task: updated, artifact };
     }
 
@@ -146,12 +153,14 @@ export class DirectiveDispatcher {
       const updated =
         (await store.updateTask(task.id, { status: "awaiting_approval" })) ?? task;
       await store.updateDirectiveStatus(directive.id, "awaiting_approval");
+      emitTaskUpdate(updated);
       return { status: result.status, finalText: result.finalText, task: updated };
     }
 
     // max_steps / tanpa teks final → butuh perhatian (review), tanpa artifact.
     const updated = (await store.updateTask(task.id, { status: "review" })) ?? task;
     await store.updateDirectiveStatus(directive.id, "in_progress");
+    emitTaskUpdate(updated);
     return { status: result.status, finalText: result.finalText, task: updated };
   }
 }

@@ -5,7 +5,7 @@
  * Event adalah union ber-`type` agar konsumen bisa narrowing secara aman.
  */
 
-import type { AgentStatus, Id } from "./types.js";
+import type { AgentStatus, Id, TaskStatus } from "./types.js";
 
 /** Field yang dimiliki semua event. */
 interface AgentEventBase {
@@ -65,6 +65,17 @@ export interface AgentErrorEvent extends AgentEventBase {
   message: string;
 }
 
+/**
+ * Task berubah status SETELAH persist selesai (BUG-110). Dipancarkan orchestrator
+ * (DirectiveDispatcher/Workflow Engine), bukan agent loop — sinyal andal untuk UI
+ * me-refresh Task Board (artifact & status `done` sudah tersimpan saat event ini tiba).
+ */
+export interface AgentTaskUpdateEvent extends AgentEventBase {
+  type: "task_update";
+  taskId: Id;
+  status: TaskStatus;
+}
+
 /** Union semua event agent. */
 export type AgentEvent =
   | AgentStatusEvent
@@ -73,7 +84,8 @@ export type AgentEvent =
   | AgentMessageEvent
   | AgentApprovalRequestedEvent
   | AgentMemoryEvent
-  | AgentErrorEvent;
+  | AgentErrorEvent
+  | AgentTaskUpdateEvent;
 
 /** Tipe diskriminan untuk indexing/filtering. */
 export type AgentEventType = AgentEvent["type"];

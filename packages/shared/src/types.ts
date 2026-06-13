@@ -175,6 +175,7 @@ export type DirectiveStatus =
   | "planned"
   | "in_progress"
   | "awaiting_approval"
+  | "blocked"
   | "done";
 
 /** Arahan dari user (lewat WA atau UI). */

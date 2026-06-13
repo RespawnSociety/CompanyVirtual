@@ -99,8 +99,14 @@ export function App(): JSX.Element {
       onConnectChange: setConnected,
       onAgentEvent: (e) => {
         setLastEvent(e);
-        // Status/akhir-skill/pesan → kemungkinan task/artifact berubah → refetch Task Board.
-        if (e.type === "status" || e.type === "skill_end" || e.type === "message") {
+        // BUG-110: `task_update` = sinyal andal POST-persist (artifact & status sudah tersimpan).
+        // Event lain (status/skill_end/message) memicu refetch ringan selama kerja berlangsung.
+        if (
+          e.type === "task_update" ||
+          e.type === "status" ||
+          e.type === "skill_end" ||
+          e.type === "message"
+        ) {
           setRefreshTick((t) => t + 1);
         }
       },
