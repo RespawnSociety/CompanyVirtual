@@ -152,6 +152,63 @@ describe("Phase 3 — WorkflowEngine (pipeline generik + approval gate)", () => 
     expect(resumed!.approvalId).not.toBe(firstApproval);
   });
 
+  it("BUG-112: kuota revisi habis tapi reviewer tetap REVISI → run & directive `blocked` (bukan approval)", async () => {
+    const { departmentId } = await seedMarketing(store);
+    const router = new MockRouterClient([
+      (req) => {
+        const t = instr(req);
+        if (/review output terakhir/i.test(t)) return textResponse("REVISI: masih belum layak.");
+        if (/persetujuan owner/i.test(t)) return textResponse("Ringkasan.");
+        return textResponse("Output.");
+      },
+    ]);
+    const engine = new WorkflowEngine({
+      store,
+      router,
+      skills: allSkills(),
+      memory: store.createMemoryStore(),
+      emitAgentEvent: () => {},
+      maxReviewRounds: 1,
+    });
+    const { directive, done } = await engine.startForDepartment(departmentId, "Konten", "ui");
+    const final = await done;
+    expect(final.status).toBe("blocked");
+    expect(final.approvalId).toBeUndefined();
+    expect((await store.getDirective(directive.id))!.status).toBe("blocked");
+  });
+
+  it("BUG-113: dua run pause pada clock sama → approvalId tetap UNIK + resume menargetkan run yang benar", async () => {
+    const a = await seedMarketing(store);
+    const b = await seedMarketing(store);
+    const responder = (req: ChatRequest) => {
+      const t = instr(req);
+      if (/review output terakhir/i.test(t)) return textResponse("PASS\nlayak.");
+      if (/persetujuan owner/i.test(t)) return textResponse("Ringkasan.");
+      return textResponse("Output.");
+    };
+    // Clock TETAP + tanpa genId → dulu bikin approvalId tabrakan (timestamp). Kini pakai defaultGenId.
+    const engine = new WorkflowEngine({
+      store,
+      router: new MockRouterClient([responder]),
+      skills: allSkills(),
+      memory: store.createMemoryStore(),
+      emitAgentEvent: () => {},
+      now: () => 1234567890,
+    });
+    const r1 = await (await engine.startForDepartment(a.departmentId, "x", "ui")).done;
+    const r2 = await (await engine.startForDepartment(b.departmentId, "y", "ui")).done;
+    expect(r1.status).toBe("awaiting_approval");
+    expect(r2.status).toBe("awaiting_approval");
+    expect(r1.approvalId).toBeTruthy();
+    expect(r1.approvalId).not.toBe(r2.approvalId);
+
+    const resumed = await engine.resumeByApproval(r1.approvalId!, "approve");
+    expect(resumed!.id).toBe(r1.id);
+    expect(resumed!.status).toBe("done");
+    // run kedua tak ikut ter-resume.
+    expect((await store.getWorkflowRun(r2.id))!.status).toBe("awaiting_approval");
+  });
+
   it("department tanpa workflow → departmentHasWorkflow false; resume approval tak dikenal → undefined", async () => {
     const c = await store.createCompany({ name: "NoWf" });
     const f = await store.createFloor(c.id, { name: "L1" });

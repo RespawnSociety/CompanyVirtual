@@ -812,9 +812,16 @@ export class ConfigStore {
     return row ? this.rowToWorkflowRun(row) : undefined;
   }
 
-  /** Cari run yang sedang menunggu approval tertentu (untuk resume APPROVE/REVISI). */
+  /**
+   * Cari run yang sedang menunggu approval tertentu (untuk resume APPROVE/REVISI).
+   * BUG-113: filter `status = 'awaiting_approval'` + LIMIT 1 deterministik — hanya run yang
+   * benar-benar menunggu yang bisa di-resume (abaikan run lama yang approvalId-nya sudah di-clear).
+   */
   async findWorkflowRunByApproval(approvalId: Id): Promise<WorkflowRun | undefined> {
-    const row = await this.one("SELECT * FROM workflow_runs WHERE approval_id = ?", [approvalId]);
+    const row = await this.one(
+      "SELECT * FROM workflow_runs WHERE approval_id = ? AND status = 'awaiting_approval' ORDER BY created_at, id LIMIT 1",
+      [approvalId],
+    );
     return row ? this.rowToWorkflowRun(row) : undefined;
   }
 

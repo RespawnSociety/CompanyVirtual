@@ -27,7 +27,7 @@ import type {
   WorkflowRun,
   WorkflowStep,
 } from "@vc/shared";
-import { runAgentLoop, type MemoryStore, type SkillRegistry } from "@vc/agent-runtime";
+import { defaultGenId, runAgentLoop, type MemoryStore, type SkillRegistry } from "@vc/agent-runtime";
 import type { ConfigStore } from "../db/store.js";
 
 export interface WorkflowEngineDeps {
@@ -179,13 +179,22 @@ export class WorkflowEngine {
       }
       if (step.next === "loop_until_pass") {
         const revise = /revisi/i.test(out.finalText) && !/^\s*(pass|lolos|layak)\b/i.test(out.finalText);
-        if (revise && run.reviewRounds < maxReviewRounds) {
-          run = (await store.updateWorkflowRun(run.id, { reviewRounds: run.reviewRounds + 1 }))!;
-          pendingNote = `Revisi dari ${step.role}: ${out.finalText}`;
-          i = contentStepIndex(steps); // ulang dari step konten
-          continue;
+        if (revise) {
+          if (run.reviewRounds < maxReviewRounds) {
+            run = (await store.updateWorkflowRun(run.id, { reviewRounds: run.reviewRounds + 1 }))!;
+            pendingNote = `Revisi dari ${step.role}: ${out.finalText}`;
+            i = contentStepIndex(steps); // ulang dari step konten
+            continue;
+          }
+          // BUG-112: kuota revisi habis TAPI reviewer masih menolak → JANGAN diam-diam lanjut ke
+          // approval (konten belum lolos). Tandai blocked + beri tahu owner.
+          return this.blockRun(
+            run,
+            dept,
+            `kuota revisi (${maxReviewRounds}) habis tapi ${step.role} masih minta REVISI: ${truncate(out.finalText, 300)}`,
+          );
         }
-        i += 1; // PASS atau kuota revisi habis → lanjut
+        i += 1; // PASS → lanjut
         continue;
       }
       if (typeof step.next === "string") {
@@ -266,7 +275,9 @@ export class WorkflowEngine {
   ): Promise<WorkflowRun> {
     const { store } = this.deps;
     const now = this.deps.now ?? Date.now;
-    const genId = this.deps.genId ?? ((p: string) => `${p}_${now()}`);
+    // BUG-113: pakai generator id unik (uuid-based), BUKAN timestamp — dua run yang pause pada
+    // milidetik sama tak boleh mendapat approvalId identik (approvalId = identity boundary keputusan owner).
+    const genId = this.deps.genId ?? defaultGenId;
     const approvalId = genId("appr");
     // Step yang dijalankan SETELAH approve = step berikutnya pada array.
     const nextStep = steps[gateIndex + 1];
@@ -304,6 +315,23 @@ export class WorkflowEngine {
     await store.updateDirectiveStatus(directiveId, "done");
     const done = (await store.updateWorkflowRun(runId, { status: "done", currentStepId: null }))!;
     return done;
+  }
+
+  /** Hentikan run sebagai `blocked` (perlu perhatian owner) + beri tahu lewat pesan. */
+  private async blockRun(run: WorkflowRun, dept: Department, reason: string): Promise<WorkflowRun> {
+    const { store } = this.deps;
+    const now = this.deps.now ?? Date.now;
+    await store.updateDirectiveStatus(run.directiveId, "blocked");
+    const blocked =
+      (await store.updateWorkflowRun(run.id, { status: "blocked", approvalId: null }))!;
+    this.emit(dept.companyId, {
+      type: "message",
+      agentId: dept.id,
+      at: now(),
+      to: "user",
+      text: `Workflow berhenti (perlu perhatian): ${reason}`,
+    });
+    return blocked;
   }
 
   /** Rekonstruksi konteks role→output dari artifact yang sudah tersimpan. */

@@ -5,7 +5,7 @@
 > Konvensi: prosa Bahasa Indonesia, identifier/file/path/data-model English.
 
 > **Catatan pembersihan 2026-06-13:** entri `VERIFIED_FIXED` sudah dicek ulang dan dihapus dari daftar aktif. Yang tersisa di file ini hanya bug yang masih perlu keputusan/perbaikan.
-> **Catatan sweep Phase 0-2 2026-06-13:** migrasi MySQL/async dan runtime Phase 2 direview. Gate observasi: `npm run build`, `npm run lint`, `npx tsc -p apps/web/tsconfig.json --noEmit`, `npm test` (52 passed).
+> **Catatan sweep Phase 0-3 2026-06-13:** `packages/shared`, `packages/agent-runtime`, `packages/templates`, `apps/server`, dan `apps/web` direview ulang, dengan fokus tambahan `WorkflowEngine`, `workflow_runs`, approval gate, dan `WorkflowPanel`. Gate observasi: `npm run build`, `npm run lint`, `npx tsc -p apps/web/tsconfig.json --noEmit`, `npm test` (57 passed). `BUG-107/108` tetap `OPEN` menunggu keputusan strategi auth Phase 4; temuan workflow baru dicatat sebagai `BUG-112` dan `BUG-113`.
 
 ## Legenda Status
 `OPEN` (terverifikasi, belum dikerjakan) | `FIXING` (Claude kerjakan) | `FIXED` (Claude klaim, tunggu verifikasi) | `VERIFIED_FIXED` (Codex konfirmasi beres) | `REOPENED` (Codex tolak, ada bukti) | `FALSE_POSITIVE` | `WONTFIX`
@@ -15,8 +15,8 @@
 |---|---|---|---|---|
 | BUG-107 | `API_AUTH_TOKEN` membuat REST terlindungi, tetapi web client tidak pernah mengirim bearer | high | OPEN | `apps/web/src/api.ts:41`, `apps/server/src/server.ts:60` |
 | BUG-108 | Socket realtime tetap bisa mengambil `world:sync` tanpa auth saat REST sudah dilindungi token | high | OPEN | `apps/server/src/realtime.ts:33`, `apps/server/src/server.ts:60` |
-| BUG-110 | Task Board live bisa melewatkan status `done` dan artifact karena event dikirim sebelum persist selesai | medium | VERIFIED_FIXED | `packages/agent-runtime/src/loop.ts:137`, `apps/server/src/registry/dispatcher.ts:132`, `apps/web/src/App.tsx:100` |
-| BUG-111 | Router error membuat task `blocked`, tetapi directive tetap `in_progress` | medium | VERIFIED_FIXED | `apps/server/src/registry/dispatcher.ts:125`, `packages/shared/src/types.ts:173` |
+| BUG-112 | Review loop menganggap kuota revisi habis sebagai lanjut ke approval | medium | FIXED | `apps/server/src/workflow/engine.ts:180`, `apps/server/src/workflow/engine.ts:188` |
+| BUG-113 | `approvalId` default berbasis timestamp bisa tabrakan antar workflow run | high | FIXED | `apps/server/src/workflow/engine.ts:269`, `apps/server/src/db/store.ts:816` |
 
 ---
 
@@ -52,9 +52,7 @@ Server sudah mendukung `API_AUTH_TOKEN` dan bahkan mewajibkannya saat bind non-l
     headers: { "content-type": "application/json" },
   ```
 - Kontrak env (`.env.example:55-58`) menyatakan klien harus mengirim `Authorization: Bearer <token>`, tetapi tidak ada `VITE_*`/config/token path di `apps/web`.
-- Observasi:
-  `buildServer({ apiAuthToken: "secret" })` mengembalikan
-  `{"noAuth":401,"auth":200}` untuk `GET /api/companies`; request tanpa header sama dengan perilaku `api.ts`.
+- Observasi: `buildServer({ apiAuthToken: "secret" })` mengembalikan `{"noAuth":401,"auth":200}` untuk `GET /api/companies`; request tanpa header sama dengan perilaku `api.ts`.
 
 **Dampak**
 Begitu operator mengikuti instruksi aman untuk hosting non-lokal (`API_AUTH_TOKEN` wajib), web app tidak bisa memuat company/template/world/CRUD karena semua request REST dikirim tanpa bearer. Ini memblokir Phase 1 UI pada mode aman.
@@ -115,8 +113,7 @@ Bearer auth hanya diterapkan pada URL yang diawali `/api/`. Socket.IO `/socket.i
   ...
   socket.emit("world:subscribe", companyId);
   ```
-- Observasi:
-  Server in-memory dengan `apiAuthToken: "secret"` + `RealtimeHub` menerima socket tanpa token dan mengirim `{"company":"A","agents":1}` setelah `world:subscribe`.
+- Observasi: server in-memory dengan `apiAuthToken: "secret"` + `RealtimeHub` menerima socket tanpa token dan mengirim `{"company":"A","agents":1}` setelah `world:subscribe`.
 - Alasan ini bug: proteksi REST tidak menutup channel realtime yang membawa data company yang sama (`WorldSnapshot` berisi company, floors, departments, agents).
 
 **Dampak**
@@ -142,140 +139,130 @@ Kosong sampai Claude menandai `FIXED`.
 
 ---
 
-### BUG-110 - Task Board live bisa melewatkan status `done` dan artifact karena event dikirim sebelum persist selesai
+### BUG-112 - Review loop menganggap kuota revisi habis sebagai lanjut ke approval
 
-- **Status:** VERIFIED_FIXED
+- **Status:** FIXED
 - **Severity:** medium
-- **Category:** concurrency
-- **Location:** `packages/agent-runtime/src/loop.ts:137`, `packages/agent-runtime/src/loop.ts:184`, `apps/server/src/registry/dispatcher.ts:132`, `apps/server/src/registry/dispatcher.ts:139`, `apps/web/src/App.tsx:100`, `apps/web/src/components/TaskBoard.tsx:51`
+- **Category:** logic
+- **Location:** `apps/server/src/workflow/engine.ts:180`, `apps/server/src/workflow/engine.ts:188`, `docs/RUNBOOK.md:189`, `tests/workflow.test.ts:99`
 - **Ditemukan:** 2026-06-13 oleh Codex
 
 **Deskripsi**
-Task Board direfresh oleh event agent (`message`, `status`, `skill_end`), tetapi event selesai dari `runAgentLoop` dikirim sebelum `DirectiveDispatcher` menyimpan artifact dan mengubah task ke `done`. Karena tidak ada event post-persist, UI bisa refetch terlalu cepat dan tetap melihat task `in_progress` tanpa artifact sampai user refresh manual atau event lain datang.
+Pada step `loop_until_pass`, reviewer yang masih menjawab `REVISI` setelah `maxReviewRounds` tercapai diperlakukan sama seperti `PASS`: engine lanjut ke step berikutnya dan akhirnya masuk `approval_gate`. Cap revisi seharusnya mencegah loop tak terbatas, bukan mengubah hasil review gagal menjadi jalur approval normal.
 
 **Bukti**
-- Kutipan kode (`packages/agent-runtime/src/loop.ts:134-137`):
+- Kutipan kode (`apps/server/src/workflow/engine.ts:180-188`):
   ```ts
-  finalText = res.message.content;
-  status = "done";
-  if (finalText) {
-    emit({ type: "message", agentId: agent.id, at: now(), to: "user", text: finalText });
-  ```
-- Kutipan kode (`packages/agent-runtime/src/loop.ts:181-185`):
-  ```ts
-  emit({
-    type: "status",
-    agentId: agent.id,
-    at: now(),
-    status: status === "blocked" ? "blocked" : "idle",
-  ```
-- Kutipan kode (`apps/server/src/registry/dispatcher.ts:113`, `apps/server/src/registry/dispatcher.ts:132-140`):
-  ```ts
-  result = await runAgentLoop(agent, directive.text, {
-  ...
-  const artifact = await store.addArtifact({
-  ...
-  const updated =
-    (await store.updateTask(task.id, { status: "done", outputRef: artifact.id })) ?? task;
-  await store.updateDirectiveStatus(directive.id, "done");
-  ```
-- Kutipan kode (`apps/web/src/App.tsx:100-105`, `apps/web/src/components/TaskBoard.tsx:51`):
-  ```tsx
-  onAgentEvent: (e) => {
-    setLastEvent(e);
-    if (e.type === "status" || e.type === "skill_end" || e.type === "message") {
-      setRefreshTick((t) => t + 1);
+  if (step.next === "loop_until_pass") {
+    const revise = /revisi/i.test(out.finalText) && !/^\s*(pass|lolos|layak)\b/i.test(out.finalText);
+    if (revise && run.reviewRounds < maxReviewRounds) {
+      run = (await store.updateWorkflowRun(run.id, { reviewRounds: run.reviewRounds + 1 }))!;
+      pendingNote = `Revisi dari ${step.role}: ${out.finalText}`;
+      i = contentStepIndex(steps); // ulang dari step konten
+      continue;
     }
-  ...
-  Promise.all([api.listTasks(companyId), api.listArtifacts(companyId)])
+    i += 1; // PASS atau kuota revisi habis -> lanjut
   ```
-- Observasi probe runtime:
-  `["event:status:working","event:message","event:memory","event:memory","event:status:idle","addArtifact","updateTask:done"]`.
-- Alasan ini bug: event yang memicu `refreshTick` terjadi sebelum `addArtifact` dan `updateTask:done`, sementara tidak ada `task:updated`/event lain setelah persist selesai.
+- Kontrak operasional (`docs/RUNBOOK.md:189-190`) mendeskripsikan `loop_until_pass` sebagai `REVISI -> ulang step konten` dan `PASS -> lanjut`.
+- Coverage saat ini hanya menguji satu `REVISI` lalu lanjut (`tests/workflow.test.ts:99-125`), bukan kondisi reviewer tetap `REVISI` sampai cap habis.
+- Observasi probe runtime dengan `maxReviewRounds: 1` dan reviewer selalu menjawab `REVISI: masih belum layak.`:
+  ```json
+  {"runStatus":"awaiting_approval","directiveStatus":"awaiting_approval","reviewRounds":1,"approvalId":"appr_1781351613581","currentStepId":"wf-step_701c5a84-6bf5-412d-b668-2fafdebfee49"}
+  ```
+- Alasan ini bug: output terakhir reviewer masih menolak konten, tetapi state run dan directive masuk `awaiting_approval` seolah konten sudah lolos review.
 
 **Dampak**
-Alur DoD Phase 2 ("Task Board live") bisa tampak macet: karakter sudah kembali idle, tetapi Task Board masih menampilkan task `Dikerjakan` tanpa tombol "Lihat konten". User perlu pindah/refresh manual atau menunggu event lain yang tidak dijamin ada.
+Konten yang belum lolos review bisa masuk approval/publish path setelah kuota revisi habis. Pada Phase 3 publish masih stub, tetapi saat Phase 4 menghubungkan aksi publish nyata, failure mode ini bisa mengirim draft yang reviewer eksplisit minta revisi.
 
 **Verifikasi #1 (pembacaan kode)**
-`runAgentLoop` emit `message` dan status `idle` sebelum return. `DirectiveDispatcher` baru menyimpan artifact dan mengubah status task setelah `await runAgentLoop(...)` selesai. Web hanya refetch Task Board ketika event agent menaikkan `refreshTick`.
+Cabang `revise && run.reviewRounds < maxReviewRounds` hanya mengulang saat kuota belum habis. Begitu kuota habis, tidak ada cabang error/blocked/escalation; eksekusi jatuh ke `i += 1` dan melanjutkan workflow.
 
-**Verifikasi #2 (observasi runtime + kontrak DoD)**
-Probe dengan `MockRouterClient([textResponse("final")])` dan wrapper `store.addArtifact/updateTask` menunjukkan urutan event sebelum persist: `event:message` dan `event:status:idle` muncul sebelum `addArtifact` dan `updateTask:done`. `docs/ROADMAP.md:91` menyebut Task Board live "refetch saat event", jadi event post-persist wajib ada agar live update deterministik.
+**Verifikasi #2 (observasi runtime + cakupan test)**
+Probe runtime memakai engine asli, template marketing asli, dan MySQL test DB menunjukkan state akhir `awaiting_approval` meski reviewer selalu `REVISI`. Test Phase 3 yang ada membuktikan happy path revisi sekali (`tests/workflow.test.ts:99`) tetapi belum menutup skenario cap habis.
 
 **Solusi yang diusulkan (untuk Claude)**
-1. Tambahkan event realtime post-persist, misalnya `task:updated`/`runtime:sync`, setelah `addArtifact`, `updateTask`, dan `updateDirectiveStatus` selesai di `DirectiveDispatcher`.
-2. Update kontrak `packages/shared/src/realtime.ts` dan `apps/web/src/socket.ts` agar web bisa menerima event task selesai.
-3. Di `App.tsx`, naikkan `refreshTick` dari event post-persist tersebut, bukan hanya dari event agent yang terjadi selama loop.
-4. Tambahkan test/unit probe: urutan event yang memicu Task Board harus terjadi setelah task `done` dan artifact tersedia.
+1. Di `apps/server/src/workflow/engine.ts`, bila `revise` masih true dan `reviewRounds >= maxReviewRounds`, jangan lanjut `i += 1`.
+2. Pilih state eksplisit: paling sederhana set `WorkflowRun.status` dan `Directive.status` ke `"blocked"` dengan pesan alasan "review cap exhausted"; alternatif produk: status khusus `needs_owner_review` bila owner memang boleh override draft gagal.
+3. Emit event/message post-persist agar UI tahu workflow berhenti karena review cap, bukan menunggu approval normal.
+4. Tambahkan test di `tests/workflow.test.ts`: reviewer selalu `REVISI` sampai cap habis -> run tidak punya `approvalId`, tidak `awaiting_approval`, dan directive tidak `awaiting_approval`.
 
 **Diperbaiki (Claude 2026-06-13) — FIXED (menunggu verifikasi Codex).**
-Ditambah event POST-persist `task_update` di event bus:
-- `packages/shared/src/events.ts`: tipe baru `AgentTaskUpdateEvent` (`type:"task_update"`, `taskId`, `status`) di union `AgentEvent`.
-- `apps/server/src/registry/dispatcher.ts`: `emitTaskUpdate(updated)` dipanggil **setelah** `addArtifact` + `updateTask` + `updateDirectiveStatus` selesai, di SEMUA cabang (done/awaiting_approval/review/error). Jadi event ini dijamin tiba sesudah artifact & status tersimpan.
-- `apps/web/src/App.tsx`: `onAgentEvent` menaikkan `refreshTick` saat `type === "task_update"` (selain status/skill_end/message), jadi Task Board refetch setelah persist.
-- Test `tests/dispatch.test.ts`: happy-path mengecek ada event `task_update` ber-status `done`.
-Gate: `npm test` 53/53, `lint`, `typecheck:web` hijau.
+`apps/server/src/workflow/engine.ts` (cabang `loop_until_pass`): bila `revise` masih true DAN
+`reviewRounds >= maxReviewRounds` → tidak lagi `i += 1` ke approval. Memanggil helper baru
+`blockRun(run, dept, reason)` yang set `WorkflowRun.status` + `Directive.status` = `"blocked"`,
+meng-clear `approvalId`, dan emit `message` ke owner ("Workflow berhenti (perlu perhatian): kuota revisi
+habis tapi … masih minta REVISI"). Test `tests/workflow.test.ts` ("BUG-112 …", `maxReviewRounds:1`,
+reviewer selalu REVISI): run & directive `blocked`, `approvalId` undefined. Gate: `npm test` 59/59, build/lint hijau.
 
 **Catatan verifikasi perbaikan**
-VERIFIED_FIXED 2026-06-13 oleh Codex. Pembacaan kode: `packages/shared/src/events.ts:73-78` menambahkan `AgentTaskUpdateEvent` (`type: "task_update"`, `taskId`, `status`) ke union `AgentEvent`; `apps/server/src/registry/dispatcher.ts:112-113` membuat `emitTaskUpdate`, dan memanggilnya setelah persist selesai di cabang `done` (`apps/server/src/registry/dispatcher.ts:138-147`), error (`apps/server/src/registry/dispatcher.ts:130-132`), awaiting approval (`apps/server/src/registry/dispatcher.ts:153-156`), dan review (`apps/server/src/registry/dispatcher.ts:161-163`). UI menaikkan `refreshTick` saat menerima `task_update` di `apps/web/src/App.tsx:100-113`. Observasi runtime: urutan happy path sekarang `...,"addArtifact","updateTask:done","event:task_update:done"`, jadi refetch andal terjadi setelah artifact dan status task tersimpan. Gate lulus: `npm run build`, `npm run lint`, `npx tsc -p apps/web/tsconfig.json --noEmit`, `npm test` (53 passed).
+Kosong sampai Codex memverifikasi.
 
 ---
 
-### BUG-111 - Router error membuat task `blocked`, tetapi directive tetap `in_progress`
+### BUG-113 - `approvalId` default berbasis timestamp bisa tabrakan antar workflow run
 
-- **Status:** VERIFIED_FIXED
-- **Severity:** medium
-- **Category:** logic
-- **Location:** `apps/server/src/registry/dispatcher.ts:125`, `apps/server/src/registry/dispatcher.ts:126`, `packages/shared/src/types.ts:173`, `docs/RUNBOOK.md:165`
+- **Status:** FIXED
+- **Severity:** high
+- **Category:** concurrency
+- **Location:** `apps/server/src/workflow/engine.ts:269`, `apps/server/src/db/store.ts:816`, `apps/server/src/db/schema.ts:128`, `apps/server/src/db/schema.ts:134`, `apps/server/src/main.ts:143`
 - **Ditemukan:** 2026-06-13 oleh Codex
 
 **Deskripsi**
-Saat `runAgentLoop` gagal (misalnya 9Router mati), dispatcher menandai task sebagai `blocked`, tetapi directive induknya tetap di-set `in_progress`. Kontrak `DirectiveStatus` juga belum punya status terminal error/blocked, sehingga directive bisa terlihat masih berjalan padahal semua task-nya sudah gagal.
+`pauseForApproval` membuat `approvalId` default dari `Date.now()` (`appr_<timestamp>`) bila dependency `genId` tidak diberikan. Runtime production di `main.ts` membuat `WorkflowEngine` tanpa `genId`, sementara tabel `workflow_runs` hanya memberi index biasa pada `approval_id`. Dua workflow yang pause pada milidetik sama bisa memiliki `approvalId` identik; endpoint resume lalu hanya mengambil satu row arbitrer dari `SELECT * WHERE approval_id = ?`.
 
 **Bukti**
-- Kutipan kode (`apps/server/src/registry/dispatcher.ts:123-127`):
+- Kutipan kode (`apps/server/src/main.ts:143`):
   ```ts
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const updated = (await store.updateTask(task.id, { status: "blocked" })) ?? task;
-    await store.updateDirectiveStatus(directive.id, "in_progress");
-    return { status: "error", finalText: null, task: updated, error: message };
+  const workflowEngine = new WorkflowEngine({ store, router, skills, memory, emitAgentEvent });
+  ```
+- Kutipan kode (`apps/server/src/workflow/engine.ts:268-270`):
+  ```ts
+  const now = this.deps.now ?? Date.now;
+  const genId = this.deps.genId ?? ((p: string) => `${p}_${now()}`);
+  const approvalId = genId("appr");
+  ```
+- Kutipan kode (`apps/server/src/db/store.ts:816-818`):
+  ```ts
+  async findWorkflowRunByApproval(approvalId: Id): Promise<WorkflowRun | undefined> {
+    const row = await this.one("SELECT * FROM workflow_runs WHERE approval_id = ?", [approvalId]);
+    return row ? this.rowToWorkflowRun(row) : undefined;
   }
   ```
-- Kutipan kode (`packages/shared/src/types.ts:173-179`):
-  ```ts
-  export type DirectiveStatus =
-    | "received"
-    | "planned"
-    | "in_progress"
-    | "awaiting_approval"
-    | "done";
+- Kutipan skema (`apps/server/src/db/schema.ts:128`, `apps/server/src/db/schema.ts:134`):
+  ```sql
+  approval_id     VARCHAR(64) NULL,
+  INDEX idx_wfruns_approval (approval_id),
   ```
-- Kontrak operasional (`docs/RUNBOOK.md:165`) menyatakan tanpa 9Router, task akan jadi `blocked`.
-- Observasi probe runtime:
-  `{"outcome":"error","taskStatus":"blocked","directiveStatus":"in_progress"}`.
-- Alasan ini bug: parent directive tidak punya status terminal yang merepresentasikan kegagalan child task, sehingga read model directive bertentangan dengan state task.
+- Observasi probe runtime dengan `now: () => 1234567890` dan `genId` tidak diberikan:
+  ```json
+  {"approvalIds":["appr_1234567890","appr_1234567890"],"same":true,"pendingBefore":[{"id":"run_3b895ea4-9be3-46f2-9257-fc395629c293","approvalId":"appr_1234567890","status":"awaiting_approval"},{"id":"run_80bb9059-d524-4851-9945-8ceaa4dc43ad","approvalId":"appr_1234567890","status":"awaiting_approval"}],"resumedRunId":"run_3b895ea4-9be3-46f2-9257-fc395629c293","after":[{"id":"run_3b895ea4-9be3-46f2-9257-fc395629c293","status":"done"},{"id":"run_80bb9059-d524-4851-9945-8ceaa4dc43ad","approvalId":"appr_1234567890","status":"awaiting_approval"}]}
+  ```
+- Alasan ini bug: `approvalId` adalah identity boundary untuk keputusan owner. Jika dua pending card punya ID sama, `POST /api/approvals/:approvalId` tidak bisa membedakan run mana yang sedang disetujui.
 
 **Dampak**
-Endpoint `GET /api/companies/:id/directives` dapat menampilkan directive gagal sebagai masih berjalan. Dashboard/phase berikutnya yang menghitung pekerjaan aktif dari directive akan salah, dan operator tidak punya sinyal bahwa directive berhenti karena router error.
+Pada beban paralel atau test/runtime dengan clock yang sama, klik approve/revise untuk satu workflow bisa meresume workflow lain yang memiliki `approvalId` identik. Ini merusak approval gate: keputusan owner tidak lagi terikat ke draft/run yang dimaksud.
 
 **Verifikasi #1 (pembacaan kode)**
-Catch block router/loop error eksplisit menulis task `blocked`, lalu menulis directive kembali ke `in_progress`. Tidak ada cabang lain yang mengubah directive tersebut setelah error.
+Production `WorkflowEngine` tidak menerima `genId`, sehingga fallback timestamp aktif. `findWorkflowRunByApproval` mencari hanya berdasarkan `approval_id` tanpa `status = 'awaiting_approval'`, tanpa `ORDER BY`, dan tanpa constraint unik di skema.
 
 **Verifikasi #2 (observasi runtime)**
-Probe dengan `DirectiveDispatcher`, router mock yang melempar `Error("router down")`, dan MySQL test DB menghasilkan outcome `error`, task DB `blocked`, tetapi directive DB tetap `in_progress`.
+Probe runtime membuat dua workflow marketing yang sama-sama pause approval dengan `now` tetap dan `genId` kosong. Keduanya mendapat `approvalId` identik; satu panggilan `resumeByApproval("appr_1234567890", "approve")` hanya menyelesaikan satu run, sementara run lain tetap `awaiting_approval` dengan ID yang sama.
 
 **Solusi yang diusulkan (untuk Claude)**
-1. Tambahkan status terminal error pada `DirectiveStatus`, paling konsisten: `"blocked"`.
-2. Ubah catch di `apps/server/src/registry/dispatcher.ts` agar `updateDirectiveStatus(directive.id, "blocked")` saat task blocked karena router/loop error.
-3. Update UI/API typing yang memakai `DirectiveStatus` bila ada.
-4. Tambahkan test di `tests/dispatch.test.ts`: router gagal -> task `blocked`, directive `blocked`, outcome `error`.
+1. Gunakan generator ID unik yang sama dengan runtime lain: import/pakai `defaultGenId("appr")` sebagai fallback di `pauseForApproval`, bukan `${Date.now()}`.
+2. Pertimbangkan constraint unik untuk `workflow_runs.approval_id` saat non-null, atau setidaknya deteksi collision dan regenerate sebelum persist.
+3. Ubah `findWorkflowRunByApproval` agar memfilter `status = 'awaiting_approval'` dan gagal eksplisit bila ada lebih dari satu row aktif dengan ID yang sama.
+4. Tambahkan test di `tests/workflow.test.ts`: dua run yang pause pada clock sama tetap mendapatkan `approvalId` berbeda, dan resume menargetkan run yang benar.
 
 **Diperbaiki (Claude 2026-06-13) — FIXED (menunggu verifikasi Codex).**
-- `packages/shared/src/types.ts`: tambah status terminal `"blocked"` ke `DirectiveStatus`.
-- `apps/server/src/registry/dispatcher.ts`: catch error loop/router kini `updateDirectiveStatus(directive.id, "blocked")` (bukan `in_progress`), konsisten dengan task yang juga `blocked`.
-- Test `tests/dispatch.test.ts` ("BUG-111 ..."): router mock melempar → outcome `error`, task DB `blocked`, directive DB `blocked`.
-Gate: `npm test` 53/53, `lint`, `typecheck:web` hijau.
+1. `apps/server/src/workflow/engine.ts` `pauseForApproval`: fallback `genId` kini `defaultGenId`
+   (uuid-based dari `@vc/agent-runtime`), BUKAN `${prefix}_${Date.now()}`. Dua run yang pause pada
+   milidetik sama tetap mendapat `approvalId` unik.
+2. `apps/server/src/db/store.ts` `findWorkflowRunByApproval`: query difilter `AND status = 'awaiting_approval' ORDER BY created_at, id LIMIT 1` → hanya run yang benar-benar menunggu yang bisa di-resume, deterministik.
+3. Test `tests/workflow.test.ts` ("BUG-113 …"): dua run pause dengan `now` tetap (`() => 1234567890`)
+   tanpa `genId` → `approvalId` berbeda; `resumeByApproval(r1)` hanya menyelesaikan r1, r2 tetap `awaiting_approval`.
+Gate: `npm test` 59/59, build/lint hijau. (Catatan: unique-constraint DB pada `approval_id` dipertimbangkan
+tapi tak wajib karena id sudah unik + query terfilter; bisa ditambah saat hardening Phase 4.)
 
 **Catatan verifikasi perbaikan**
-VERIFIED_FIXED 2026-06-13 oleh Codex. Pembacaan kode: `packages/shared/src/types.ts:203-209` menambahkan `"blocked"` ke `DirectiveStatus`, dan catch router/loop error di `apps/server/src/registry/dispatcher.ts:123-132` sekarang menulis task `blocked` lalu `updateDirectiveStatus(directive.id, "blocked")`. Observasi runtime dengan router mock yang melempar menghasilkan `{"outcome":"error","taskStatus":"blocked","directiveStatus":"blocked"}`. Test khusus ada di `tests/dispatch.test.ts:120-138`. Gate lulus: `npm run build`, `npm run lint`, `npx tsc -p apps/web/tsconfig.json --noEmit`, `npm test` (53 passed).
+Kosong sampai Codex memverifikasi.

@@ -6,7 +6,7 @@
 > Konvensi: prosa Bahasa Indonesia, identifier/file/path/data-model English.
 
 > **Catatan pembersihan 2026-06-13:** entri `VERIFIED` sudah dicek ulang dan dihapus dari daftar aktif. Yang tersisa hanya temuan yang masih perlu keputusan/perbaikan.
-> **Catatan sweep Phase 0-2 2026-06-13:** build, lint, web typecheck, dan `npm test` (52 passed) lulus. Temuan fungsional baru dicatat di `docs/BUGLIST.md` sebagai `BUG-110` dan `BUG-111`; tidak ada temuan kualitas-only baru yang cukup kuat untuk masuk file ini.
+> **Catatan sweep Phase 0-3 2026-06-13:** build, lint, web typecheck, dan `npm test` (57 passed) lulus. Temuan fungsional workflow baru dicatat di `docs/BUGLIST.md` sebagai `BUG-112` dan `BUG-113`; tidak ada temuan kualitas-only baru yang cukup kuat untuk masuk file ini. `CR-101` tetap `OPEN` menunggu keputusan strategi auth bersama `BUG-107/108`.
 
 ## Fokus penilaian
 Optimal? Clean? Ada duplikasi / over-engineering? Penamaan jelas? Konsisten dengan kontrak `packages/shared`?
