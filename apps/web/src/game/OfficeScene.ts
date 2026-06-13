@@ -17,6 +17,7 @@ import { DEFAULT_MAP_KEY, isKnownMapKey, mapPathFor } from "./maps.js";
 
 const TILESET_TEX = "tiles-gen";
 const CHAR_TEX = "char-gen";
+const DESK_TEX = "desk-gen";
 // Phase 5.2: cache key Phaser untuk tilemap = `Floor.mapKey` itu sendiri (satu aset per mapKey).
 // Map default dimuat di preload; map lain dimuat saat runtime ketika lantai berganti.
 
@@ -29,7 +30,11 @@ interface CharObj {
   statusDot: Phaser.GameObjects.Arc;
   statusTween?: Phaser.Tweens.Tween;
   status: AgentStatus;
+  /** Petak posisi karakter SAAT INI (berubah saat berjalan). */
   tile: { x: number; y: number };
+  /** Meja kerja (objek statis di `deskTile`) + petak meja (tetap walau karakter berjalan). */
+  desk: Phaser.GameObjects.Image;
+  deskTile: { x: number; y: number };
   active?: Phaser.Tweens.TweenChain;
 }
 
@@ -141,13 +146,17 @@ export class OfficeScene extends Phaser.Scene {
       if (existing) {
         existing.label.setText(agent.name);
         existing.sprite.setTint(colorForSprite(agent.spriteKey));
-        // deskPos bisa berubah lewat Character Editor → pindahkan karakter ke meja baru.
+        // deskPos bisa berubah lewat Character Editor → pindahkan meja + karakter ke petak baru.
+        // Dibandingkan dgn deskTile (rumah), BUKAN tile (posisi jalan) → karakter yang sedang
+        // berjalan tak tertarik balik tiap snapshot; hanya edit deskPos yang memindah.
         const t = this.clampTile(agent.deskPos.x, agent.deskPos.y);
-        if (t.x !== existing.tile.x || t.y !== existing.tile.y) {
+        if (t.x !== existing.deskTile.x || t.y !== existing.deskTile.y) {
           existing.active?.stop();
           existing.tile = t;
+          existing.deskTile = { x: t.x, y: t.y };
           const { wx, wy } = this.tileToWorld(t.x, t.y);
           existing.container.setPosition(wx, wy);
+          existing.desk.setPosition(wx, wy + 6);
         }
       } else {
         this.chars.set(agent.id, this.spawnChar(agent));
@@ -159,9 +168,11 @@ export class OfficeScene extends Phaser.Scene {
         obj.active?.stop();
         obj.statusTween?.stop(); // hentikan denyut working agar tak menarget sprite yang di-destroy
         obj.container.destroy();
+        obj.desk.destroy();
         this.chars.delete(id);
         if (this.selectedId === id) this.selectedId = null;
       }
+
     }
     // Auto-pilih karakter pertama agar klik-jalan langsung bisa dicoba.
     if (!this.selectedId && this.chars.size > 0) {
@@ -254,6 +265,27 @@ export class OfficeScene extends Phaser.Scene {
       g.generateTexture(CHAR_TEX, 22, 22);
       g.destroy();
     }
+    // Meja kerja + monitor (placeholder generated, tanpa aset PNG). 32×26.
+    if (!this.textures.exists(DESK_TEX)) {
+      const g = this.add.graphics();
+      // Bayangan lembut di lantai.
+      g.fillStyle(0x0b0f18, 0.45);
+      g.fillRoundedRect(2, 14, 28, 11, 4);
+      // Permukaan meja (kayu) + highlight tepi atas.
+      g.fillStyle(0x6b4a2a, 1);
+      g.fillRoundedRect(1, 11, 30, 12, 3);
+      g.fillStyle(0x8a6238, 1);
+      g.fillRoundedRect(1, 11, 30, 4, 3);
+      // Dudukan + monitor menghadap depan (layar menyala).
+      g.fillStyle(0x222c44, 1);
+      g.fillRect(14, 8, 4, 4);
+      g.fillStyle(0x12182a, 1);
+      g.fillRoundedRect(8, 1, 16, 9, 2);
+      g.fillStyle(0x4aa3ff, 0.95);
+      g.fillRect(10, 3, 12, 5);
+      g.generateTexture(DESK_TEX, 32, 26);
+      g.destroy();
+    }
   }
 
   private buildGrid(layer: Phaser.Tilemaps.TilemapLayer | null): void {
@@ -272,6 +304,10 @@ export class OfficeScene extends Phaser.Scene {
     const tile = this.clampTile(agent.deskPos.x, agent.deskPos.y);
     const { wx, wy } = this.tileToWorld(tile.x, tile.y);
 
+    // Meja kerja: objek statis di petak meja (tetap di tempat walau karakter berjalan), di
+    // belakang karakter (depth lebih rendah). Sedikit turun agar monitor pas di tengah petak.
+    const desk = this.add.image(wx, wy + 6, DESK_TEX).setDepth(6);
+
     const ring = this.add.circle(0, 0, 15, 0xffffff, 0).setStrokeStyle(2, 0xffe066, 0).setVisible(false);
     const sprite = this.add.image(0, 0, CHAR_TEX).setTint(colorForSprite(agent.spriteKey));
     const label = this.add
@@ -284,7 +320,17 @@ export class OfficeScene extends Phaser.Scene {
     const statusDot = this.add.circle(11, -11, 4, STATUS_COLORS.idle, 1).setStrokeStyle(1, 0x0f1420, 1);
 
     const container = this.add.container(wx, wy, [ring, sprite, label, statusDot]).setDepth(10);
-    const obj: CharObj = { container, sprite, label, ring, statusDot, status: "idle", tile };
+    const obj: CharObj = {
+      container,
+      sprite,
+      label,
+      ring,
+      statusDot,
+      status: "idle",
+      tile,
+      desk,
+      deskTile: { x: tile.x, y: tile.y },
+    };
     this.applyStatus(obj, agent.status);
     return obj;
   }
