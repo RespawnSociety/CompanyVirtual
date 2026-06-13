@@ -259,15 +259,15 @@ button.danger {
   flex-wrap: wrap;
 }
 
-/* Phase 6.2: kolom panggung game fleksibel (maks = resolusi dasar 640px) + sisi info. */
+/* Phase 6.2: kolom panggung game MENGISI ruang yang tersedia (di-upscale Phaser FIT),
+ * dibatasi 1200px agar tak berlebihan di layar ultralebar. Sisi info tetap ramping. */
 .world-stage {
-  flex: 1 1 420px;
+  flex: 1 1 640px;
   min-width: 0;
-  max-width: 640px;
+  max-width: 1200px;
 }
 .world-side {
-  flex: 1 1 240px;
-  max-width: 320px;
+  flex: 0 1 300px;
 }
 
 #game-host {
@@ -275,9 +275,10 @@ button.danger {
   border-radius: 8px;
   overflow: hidden;
   background: #000;
-  /* Phaser (mode FIT) menskala canvas ke kotak ini; rasio 640:448 (20×14 petak @32px). */
+  /* Phaser (mode FIT) menskala/upscale canvas ke kotak ini; rasio 640:448 (20×14 petak @32px).
+   * Lebar mengikuti kolom (sampai 1200px) → game tampil jauh lebih besar mengisi layar. */
   width: 100%;
-  max-width: 640px;
+  max-width: 1200px;
   aspect-ratio: 640 / 448;
 }
 
