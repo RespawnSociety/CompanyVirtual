@@ -28,7 +28,7 @@
 | **2** | Runtime + 1 Agent Nyata | ✅ selesai (2.1–2.6; Codex sweep Phase 0–3 ✓, nol bug high+) | Directive → agent kerja → Artifact |
 | **3** | Departemen Lengkap + Workflow Engine | ✅ selesai (3.1–3.6; Codex sweep ✓, BUG-112/113 `VERIFIED_FIXED`) | Pipeline Marketing + Approval Gate |
 | **4** | Aksi Eksternal + Keamanan | ✅ selesai (4.1–4.5; Codex VERIFIED — BUG-107/108/114/115 `VERIFIED_FIXED`, CR-101 `VERIFIED`; test 89/89) | Publish (Playwright/dry-run) + Vault + audit + guardrails + auth boundary |
-| **5** | Platform Generalization | 🟡 5.1–5.5 ✓ (test **104/104**) — Codex review p5: **BUG-116/117 → `VERIFIED_FIXED`, CR-110 → `VERIFIED`**; temuan baru **BUG-118** (race swap map multi-floor) di-FIX, menunggu re-verifikasi Codex | Sales template + KPI dashboard + multi-floor + custom dept + throttle/cooldown |
+| **5** | Platform Generalization | ✅ selesai (5.1–5.6; Codex review p5 ✓ — BUG-116/117/118 `VERIFIED_FIXED`, CR-110/111 `VERIFIED`, nol bug aktif; test 104/104) | Sales template + KPI dashboard + multi-floor + custom dept + throttle/cooldown |
 | **6** | App Packaging | ⬜ belum | Tauri desktop + web |
 | **7** | Memory Graph per Agent | ⬜ belum | Visualisasi graph memory (ala graphify.net) per karakter |
 
@@ -144,11 +144,11 @@ Legenda: ⬜ belum · 🟡 jalan · ✅ selesai (DoD lolos + Codex verified)
 - [x] **5.3 Custom department** — dibuat tanpa template lewat Department Builder (name+purpose+skillPool); muncul di world & KPI; karakter ditambah via Character Editor. Diuji end-to-end (`tests/kpi.test.ts`).
 - [x] **5.4 KPI dashboard** — tab **📊 KPI**: biaya LLM (token nyata × tarif per-tier, per hari/dept/tier), aktivitas (task/konten/aksi eksternal/approval), status agent. Token direkam di loop (`usage_events`), dihitung `computeKpi`, endpoint `GET /api/companies/:id/kpi`. Tarif di `.env` (`COST_*`).
 - [x] **5.5 Save/resume + optimasi** — workflow run sudah persist+resume (Phase 3). Optimasi: router **throttle** (concurrency + jarak antar-panggilan, `LLM_MAX_CONCURRENCY`/`LLM_MIN_INTERVAL_MS`) + **tier cooldown** ("cache routing tier": lewati tier yang baru gagal, `NINEROUTER_TIER_COOLDOWN_MS`).
-- [~] **5.6 Codex review Phase 5** — fokus: nol regresi Marketing saat menambah dept kedua; engine tetap data-driven. **Codex sudah review (`npm run review:codex:p5`):** BUG-116/117 (`send_outreach`) → `VERIFIED_FIXED`, CR-110 (throttle escape-hatch) → `VERIFIED`. Temuan baru **BUG-118** (race async swap map multi-floor → bisa render denah lantai salah) → **di-FIX Claude** (`OfficeScene.desiredMapKey` guard), **menunggu re-verifikasi Codex**.
+- [x] **5.6 Codex review Phase 5** — fokus: nol regresi Marketing saat menambah dept kedua; engine tetap data-driven. **Codex review p5 (`npm run review:codex:p5`) LULUS:** BUG-116/117 (`send_outreach`) + BUG-118 (race swap map multi-floor, `OfficeScene.desiredMapKey` guard) → `VERIFIED_FIXED`; CR-110 (throttle escape-hatch) + CR-111 (komentar `recordLoopUsage`) → `VERIFIED`. **Nol bug/temuan aktif tersisa.**
 
 **DoD Fase 5:** pengguna bisa buat company baru, tambah **≥2 departemen berbeda** dari template/custom, keduanya jalan stabil, biaya terpantau.
 
-**Status Phase 5:** `npm run build` ✅ · `npm run lint` ✅ · `npm run typecheck:web` ✅ · `npm run build:web` ✅ · `npm test` ✅ **104/104** (stabil 4× berturut). Tambahan: flakiness lintas-file test DB diperbaiki — tiap file test kini pakai **database sendiri** (`tests/helpers/mysql.ts`), tak lagi satu DB bersama. Codex review p5: BUG-116/117 `VERIFIED_FIXED`, CR-110 `VERIFIED`; **BUG-118** (race swap map) di-FIX. Smoke multi-floor & KPI butuh web + 9Router hidup. Menunggu re-verifikasi Codex BUG-118 (5.6).
+**Status Phase 5:** `npm run build` ✅ · `npm run lint` ✅ · `npm run typecheck:web` ✅ · `npm run build:web` ✅ · `npm test` ✅ **104/104** (stabil 4× berturut). Tambahan: flakiness lintas-file test DB diperbaiki — tiap file test kini pakai **database sendiri** (`tests/helpers/mysql.ts`), tak lagi satu DB bersama. **Codex review p5 LULUS: BUG-116/117/118 `VERIFIED_FIXED`, CR-110/111 `VERIFIED`, nol bug/temuan aktif.** **Fase 5 ditandai ✅ selesai (2026-06-13).**
 
 ---
 
