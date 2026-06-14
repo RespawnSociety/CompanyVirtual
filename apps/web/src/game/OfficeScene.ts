@@ -42,6 +42,19 @@ const FOX_SHEET = "fox";
 const FOX_PATH =
   "assets/tilesets/Basic Asset Pack/Basic Asset Pack/Basic Animal Animations/Snow Fox/SnowFox.png";
 
+// Workstation: Pixel Life - Desk Essentials (16px). Crop item dari spritesheet (via profil opacity).
+const DESKESS = "deskess";
+const DESKESS_PATH = "assets/tilesets/Pixel Life - Desk Essentials/spritesheet.png";
+const DESK_RECT = { x: 0, y: 0, w: 32, h: 30 }; // meja kayu (2 petak)
+const MON_RECT = { x: 102, y: 32, w: 22, h: 31 }; // monitor komputer (layar)
+// Tata letak workstation otomatis (spasi agar meja tak tumpang-tindih).
+const SLOT_PER_ROW = 5;
+const SLOT_X0 = 3;
+const SLOT_Y0 = 4;
+const SLOT_GX = 3;
+const SLOT_GY = 5;
+const CHAR_OFF = -2; // geser karakter sedikit ke utara (duduk di belakang meja)
+
 const STATUS_COLORS: Record<AgentStatus, number> = {
   idle: 0x55607a,
   working: 0x4aa3ff,
@@ -58,7 +71,8 @@ interface CharObj {
   statusTween?: Phaser.Tweens.Tween;
   status: AgentStatus;
   tile: { x: number; y: number };
-  /** Furnitur meja (monitor) statis di petak kerja. */
+  /** Workstation statis di petak kerja: meja + monitor (Desk Essentials). */
+  desk: Phaser.GameObjects.Image;
   monitor: Phaser.GameObjects.Image;
   deskTile: { x: number; y: number };
   active?: Phaser.Tweens.TweenChain;
@@ -113,11 +127,13 @@ export class OfficeScene extends Phaser.Scene {
       this.load.spritesheet(`lz-${name}-idle`, `${LZ_BASE}/${name}_idle_anim_16x16.png`, LZ_FRAME);
     }
     this.load.spritesheet(FOX_SHEET, FOX_PATH, { frameWidth: 16, frameHeight: 16 });
+    this.load.image(DESKESS, DESKESS_PATH);
   }
 
   create(): void {
     this.makePawnTexture();
     this.makeCharAnims();
+    this.makeDeskFrames();
     this.easystar.setAcceptableTiles([0]);
     this.easystar.enableSync();
     this.buildMap(DEFAULT_MAP_KEY);
@@ -168,13 +184,14 @@ export class OfficeScene extends Phaser.Scene {
     const agents = snapshot.agents.filter((a) => deptOnFloor.has(a.departmentId));
     const seen = new Set<string>();
 
-    for (const agent of agents) {
+    // Tata letak workstation otomatis per indeks (spasi rapi) — bukan deskPos mentah, agar meja muat.
+    agents.forEach((agent, i) => {
       seen.add(agent.id);
+      const t = this.slotTile(i);
       const existing = this.chars.get(agent.id);
       if (existing) {
         existing.label.setText(agent.name);
         if (!existing.charName) existing.sprite.setTint(colorForSprite(agent.spriteKey));
-        const t = this.clampTile(agent.deskPos.x, agent.deskPos.y);
         if (t.x !== existing.deskTile.x || t.y !== existing.deskTile.y) {
           existing.active?.stop();
           existing.tile = t;
@@ -182,14 +199,15 @@ export class OfficeScene extends Phaser.Scene {
           this.placeStation(existing);
         }
       } else {
-        this.chars.set(agent.id, this.spawnChar(agent));
+        this.chars.set(agent.id, this.spawnChar(agent, t));
       }
-    }
+    });
     for (const [id, obj] of this.chars) {
       if (!seen.has(id)) {
         obj.active?.stop();
         obj.statusTween?.stop();
         obj.container.destroy();
+        obj.desk.destroy();
         obj.monitor.destroy();
         this.chars.delete(id);
         if (this.selectedId === id) this.selectedId = null;
@@ -320,6 +338,21 @@ export class OfficeScene extends Phaser.Scene {
     g.destroy();
   }
 
+  /** Definisikan frame crop (meja, monitor) dari spritesheet Desk Essentials. */
+  private makeDeskFrames(): void {
+    if (!this.textures.exists(DESKESS)) return;
+    const tex = this.textures.get(DESKESS);
+    if (!tex.has("desk")) tex.add("desk", 0, DESK_RECT.x, DESK_RECT.y, DESK_RECT.w, DESK_RECT.h);
+    if (!tex.has("monitor")) tex.add("monitor", 0, MON_RECT.x, MON_RECT.y, MON_RECT.w, MON_RECT.h);
+  }
+
+  /** Petak workstation untuk agent ke-`i` (tata letak baris, spasi agar meja muat). */
+  private slotTile(i: number): { x: number; y: number } {
+    const col = i % SLOT_PER_ROW;
+    const row = Math.floor(i / SLOT_PER_ROW);
+    return this.clampTile(SLOT_X0 + col * SLOT_GX, SLOT_Y0 + row * SLOT_GY);
+  }
+
   private makeCharAnims(): void {
     const dirs: Dir[] = ["down", "up", "left", "right"];
     for (const name of LZ_CHARS) {
@@ -379,12 +412,20 @@ export class OfficeScene extends Phaser.Scene {
 
   // ---------------- karakter ----------------
 
-  private spawnChar(agent: AgentProfile): CharObj {
-    const tile = this.clampTile(agent.deskPos.x, agent.deskPos.y);
+  private spawnChar(agent: AgentProfile, slot: { x: number; y: number }): CharObj {
+    const tile = { x: slot.x, y: slot.y };
     const charName = this.charNameFor(agent.spriteKey);
     const baseScale = charName ? CHAR_SCALE : 1;
 
-    const monitor = this.add.image(0, 0, INT_SHEET, INT_MONITOR).setOrigin(0.5, 1).setScale(TSCALE);
+    // Workstation: meja + monitor Desk Essentials (fallback monitor LimeZu bila aset tak ada).
+    const hasDE = this.textures.exists(DESKESS) && this.textures.get(DESKESS).has("desk");
+    const desk = (hasDE ? this.add.image(0, 0, DESKESS, "desk") : this.add.image(0, 0, INT_SHEET, INT_MONITOR))
+      .setOrigin(0.5, 1)
+      .setScale(hasDE ? CHAR_SCALE : TSCALE);
+    const monitor = (hasDE ? this.add.image(0, 0, DESKESS, "monitor") : this.add.image(0, 0, INT_SHEET, INT_MONITOR))
+      .setOrigin(0.5, 1)
+      .setScale(hasDE ? CHAR_SCALE : TSCALE)
+      .setVisible(hasDE);
 
     const sprite = this.add
       .sprite(0, 0, charName ? `lz-${charName}-walk` : PAWN_TEX, 0)
@@ -415,6 +456,7 @@ export class OfficeScene extends Phaser.Scene {
       statusDot,
       status: "idle",
       tile,
+      desk,
       monitor,
       deskTile: { x: tile.x, y: tile.y },
       charName: charName ?? undefined,
@@ -430,15 +472,15 @@ export class OfficeScene extends Phaser.Scene {
   /** Tempatkan monitor (di petak kerja) + karakter (duduk di belakang monitor). Depth = y. */
   private placeStation(obj: CharObj): void {
     const d = this.tileToWorld(obj.deskTile.x, obj.deskTile.y);
-    // Monitor di bagian depan-bawah petak (menutup tubuh bawah karakter → kesan duduk di meja).
-    obj.monitor.setPosition(d.wx, d.wy + TS / 2 - 2).setDepth(d.wy + TS / 2);
+    // Meja di depan (selatan) petak; monitor di atas meja; karakter di belakang (utara) → DUDUK.
+    obj.desk.setPosition(d.wx, d.wy + 28).setDepth(d.wy + 28);
+    obj.monitor.setPosition(d.wx, d.wy + 12).setDepth(d.wy + 29);
     this.placeChar(obj);
   }
 
   private placeChar(obj: CharObj): void {
     const c = this.tileToWorld(obj.tile.x, obj.tile.y);
-    // Kaki di sekitar tengah-bawah petak; depth = y kaki (top-down y-sort).
-    const feetY = c.wy + 6;
+    const feetY = c.wy + CHAR_OFF;
     obj.container.setPosition(c.wx, feetY);
     obj.container.setDepth(feetY);
   }
@@ -517,12 +559,12 @@ export class OfficeScene extends Phaser.Scene {
         const dir = this.dirFor(node.x - from.x, node.y - from.y);
         return {
           x: wx,
-          y: wy + 6,
+          y: wy + CHAR_OFF,
           duration: 200,
           onStart: () => this.playWalk(obj, dir),
           onComplete: () => {
             obj.tile = { x: node.x, y: node.y };
-            obj.container.setDepth(wy + 6);
+            obj.container.setDepth(wy + CHAR_OFF);
           },
         };
       });
