@@ -65,3 +65,7 @@ apps/desktop/src-tauri/icons/icon.ico
 apps/desktop/src-tauri/icons/icon.icns
 apps/desktop/src-tauri/icons/Square*.png
 apps/desktop/src-tauri/icons/StoreLogo.png
+
+# Source/preview aset (tak dipakai runtime) — hemat ukuran repo
+*.aseprite
+*.gif
