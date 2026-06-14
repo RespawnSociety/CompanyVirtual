@@ -351,9 +351,14 @@ export class OfficeScene extends Phaser.Scene {
 
   /** Petak workstation untuk agent ke-`i` (tata letak baris, spasi agar meja muat). */
   private slotTile(i: number): { x: number; y: number } {
-    const col = i % SLOT_PER_ROW;
-    const row = Math.floor(i / SLOT_PER_ROW);
-    return this.clampTile(SLOT_X0 + col * SLOT_GX, SLOT_Y0 + row * SLOT_GY);
+    const per = CLUSTER_COLS * CLUSTER_ROWS;
+    const c = Math.floor(i / per); // indeks cluster
+    const p = i % per; // posisi dalam cluster
+    const cc = p % CLUSTER_COLS;
+    const cr = Math.floor(p / CLUSTER_COLS);
+    const x = SLOT_X0 + c * (CLUSTER_COLS * SLOT_GX + CLUSTER_GAP_X) + cc * SLOT_GX;
+    const y = SLOT_Y0 + cr * SLOT_GY;
+    return this.clampTile(x, y);
   }
 
   private makeCharAnims(): void {
