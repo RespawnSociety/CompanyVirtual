@@ -47,13 +47,16 @@ const DESKESS = "deskess";
 const DESKESS_PATH = "assets/tilesets/Pixel Life - Desk Essentials/spritesheet.png";
 const DESK_RECT = { x: 0, y: 0, w: 32, h: 30 }; // meja kayu (2 petak)
 const MON_RECT = { x: 102, y: 32, w: 22, h: 31 }; // monitor komputer (layar)
-// Tata letak workstation otomatis (spasi agar meja tak tumpang-tindih).
-const SLOT_PER_ROW = 5;
+// Tata letak workstation otomatis — CLUSTER (pod 2×2 yang mengelompok, antar-cluster diberi jarak).
 const SLOT_X0 = 3;
 const SLOT_Y0 = 4;
-const SLOT_GX = 3;
-const SLOT_GY = 5;
-const CHAR_OFF = -2; // geser karakter sedikit ke utara (duduk di belakang meja)
+const SLOT_GX = 3; // jarak antar meja dalam cluster (x)
+const SLOT_GY = 4; // jarak antar meja dalam cluster (y)
+const CLUSTER_COLS = 2; // meja per baris dalam 1 cluster
+const CLUSTER_ROWS = 2; // baris meja dalam 1 cluster (→ 4 meja/cluster)
+const CLUSTER_GAP_X = 3; // jarak ekstra antar-cluster (x)
+const CHAR_OFF = 14; // karakter digeser ke DEPAN (selatan) → terlihat penuh, meja di belakangnya
+const WS_SCALE = 2; // skala furnitur workstation (lebih kecil dari karakter agar tak menutupi)
 
 const STATUS_COLORS: Record<AgentStatus, number> = {
   idle: 0x55607a,
@@ -421,10 +424,10 @@ export class OfficeScene extends Phaser.Scene {
     const hasDE = this.textures.exists(DESKESS) && this.textures.get(DESKESS).has("desk");
     const desk = (hasDE ? this.add.image(0, 0, DESKESS, "desk") : this.add.image(0, 0, INT_SHEET, INT_MONITOR))
       .setOrigin(0.5, 1)
-      .setScale(hasDE ? CHAR_SCALE : TSCALE);
+      .setScale(WS_SCALE);
     const monitor = (hasDE ? this.add.image(0, 0, DESKESS, "monitor") : this.add.image(0, 0, INT_SHEET, INT_MONITOR))
       .setOrigin(0.5, 1)
-      .setScale(hasDE ? CHAR_SCALE : TSCALE)
+      .setScale(WS_SCALE)
       .setVisible(hasDE);
 
     const sprite = this.add
@@ -472,9 +475,9 @@ export class OfficeScene extends Phaser.Scene {
   /** Tempatkan monitor (di petak kerja) + karakter (duduk di belakang monitor). Depth = y. */
   private placeStation(obj: CharObj): void {
     const d = this.tileToWorld(obj.deskTile.x, obj.deskTile.y);
-    // Meja di depan (selatan) petak; monitor di atas meja; karakter di belakang (utara) → DUDUK.
-    obj.desk.setPosition(d.wx, d.wy + 28).setDepth(d.wy + 28);
-    obj.monitor.setPosition(d.wx, d.wy + 12).setDepth(d.wy + 29);
+    // Workstation di BELAKANG (utara) karakter → orang tetap terlihat PENUH di depan.
+    obj.desk.setPosition(d.wx, d.wy - 8).setDepth(d.wy - 8);
+    obj.monitor.setPosition(d.wx, d.wy - 16).setDepth(d.wy - 7);
     this.placeChar(obj);
   }
 
