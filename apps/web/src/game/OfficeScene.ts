@@ -42,9 +42,18 @@ const SUB_CHAR = 6;
 // Geser karakter sedikit ke depan (bawah layar) → berdiri di depan meja & jelas terlihat.
 const CHAR_FRONT_OFFSET = 16;
 
+// Karakter pixel-art LimeZu Modern Interiors (free) — frame 16×32, 4 arah × 6 frame.
+type Dir = "down" | "up" | "left" | "right";
+const LZ_BASE = "assets/tilesets/Modern tiles_Free/Characters_free";
+const LZ_CHARS = ["Adam", "Alex", "Amelia", "Bob"] as const;
+const LZ_FRAME = { frameWidth: 16, frameHeight: 32 } as const;
+const CHAR_SCALE = 2.2;
+// Frame awal tiap arah pada strip 24-frame (run/idle_anim). Sesuaikan bila arah hadap salah.
+const DIR_FRAMES: Record<Dir, number> = { down: 0, up: 6, left: 12, right: 18 };
+
 interface CharObj {
   container: Phaser.GameObjects.Container;
-  sprite: Phaser.GameObjects.Image;
+  sprite: Phaser.GameObjects.Sprite;
   label: Phaser.GameObjects.Text;
   ring: Phaser.GameObjects.Ellipse;
   statusDot: Phaser.GameObjects.Arc;
@@ -59,6 +68,12 @@ interface CharObj {
   active?: Phaser.Tweens.TweenChain;
   /** Sedang berkeliling ambient (bukan diarahkan user/directive). */
   roaming?: boolean;
+  /** Nama karakter LimeZu (Adam/…) bila sprite asli dipakai; null = fallback pawn kode. */
+  charName?: string;
+  /** Arah hadap terakhir (untuk anim idle). */
+  faceDir: Dir;
+  /** Skala dasar sprite (LimeZu di-scale; pawn = 1) — dipakai animasi denyut working. */
+  baseScale: number;
 }
 
 const STATUS_COLORS: Record<AgentStatus, number> = {
@@ -109,10 +124,16 @@ export class OfficeScene extends Phaser.Scene {
 
   preload(): void {
     this.load.tilemapTiledJSON(DEFAULT_MAP_KEY, mapPathFor(DEFAULT_MAP_KEY));
+    // Sprite karakter LimeZu (walk = "run", idle = "idle_anim"). Bila gagal muat → fallback pawn.
+    for (const name of LZ_CHARS) {
+      this.load.spritesheet(`lz-${name}-walk`, `${LZ_BASE}/${name}_run_16x16.png`, LZ_FRAME);
+      this.load.spritesheet(`lz-${name}-idle`, `${LZ_BASE}/${name}_idle_anim_16x16.png`, LZ_FRAME);
+    }
   }
 
   create(): void {
     this.makeTextures();
+    this.makeCharAnims();
     this.easystar.setAcceptableTiles([0]);
     this.easystar.enableSync();
     this.buildMap(DEFAULT_MAP_KEY);
@@ -173,7 +194,8 @@ export class OfficeScene extends Phaser.Scene {
       const existing = this.chars.get(agent.id);
       if (existing) {
         existing.label.setText(agent.name);
-        existing.sprite.setTint(colorForSprite(agent.spriteKey));
+        // Pawn fallback di-tint per role; sprite LimeZu JANGAN di-tint (merusak warna art).
+        if (!existing.charName) existing.sprite.setTint(colorForSprite(agent.spriteKey));
         // Pindahkan meja+karakter hanya bila deskPos (rumah) berubah, bukan saat berjalan.
         const t = this.clampTile(agent.deskPos.x, agent.deskPos.y);
         if (t.x !== existing.deskTile.x || t.y !== existing.deskTile.y) {
@@ -610,18 +632,82 @@ export class OfficeScene extends Phaser.Scene {
     }
   }
 
+  /** Buat animasi walk/idle 4 arah untuk tiap karakter LimeZu yang ter-load (no-op bila gagal). */
+  private makeCharAnims(): void {
+    const dirs: Dir[] = ["down", "up", "left", "right"];
+    for (const name of LZ_CHARS) {
+      if (!this.textures.exists(`lz-${name}-walk`)) continue;
+      const idleTex = this.textures.exists(`lz-${name}-idle`) ? `lz-${name}-idle` : `lz-${name}-walk`;
+      for (const dir of dirs) {
+        const s = DIR_FRAMES[dir];
+        if (!this.anims.exists(`${name}-walk-${dir}`)) {
+          this.anims.create({
+            key: `${name}-walk-${dir}`,
+            frames: this.anims.generateFrameNumbers(`lz-${name}-walk`, { start: s, end: s + 5 }),
+            frameRate: 10,
+            repeat: -1,
+          });
+        }
+        if (!this.anims.exists(`${name}-idle-${dir}`)) {
+          this.anims.create({
+            key: `${name}-idle-${dir}`,
+            frames: this.anims.generateFrameNumbers(idleTex, { start: s, end: s + 5 }),
+            frameRate: 5,
+            repeat: -1,
+          });
+        }
+      }
+    }
+  }
+
+  /** Petakan spriteKey/role → 1 karakter LimeZu (stabil). null bila aset tak ter-load (→ pawn). */
+  private charNameFor(spriteKey: string): string | null {
+    let h = 0;
+    for (let i = 0; i < spriteKey.length; i++) h = (h * 31 + spriteKey.charCodeAt(i)) | 0;
+    const name = LZ_CHARS[Math.abs(h) % LZ_CHARS.length]!;
+    return this.textures.exists(`lz-${name}-walk`) ? name : null;
+  }
+
+  /** Arah hadap berdasarkan gerak di LAYAR (iso), bukan arah tile, agar hadap terasa benar. */
+  private screenDir(fromX: number, fromY: number, toX: number, toY: number): Dir {
+    const a = this.tileToIso(fromX, fromY);
+    const b = this.tileToIso(toX, toY);
+    const dx = b.wx - a.wx;
+    const dy = b.wy - a.wy;
+    if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? "right" : "left";
+    return dy >= 0 ? "down" : "up";
+  }
+
+  private playWalk(obj: CharObj, dir: Dir): void {
+    obj.faceDir = dir;
+    if (obj.charName) obj.sprite.play(`${obj.charName}-walk-${dir}`, true);
+  }
+
+  private playIdle(obj: CharObj): void {
+    if (obj.charName) obj.sprite.play(`${obj.charName}-idle-${obj.faceDir}`, true);
+  }
+
   private spawnChar(agent: AgentProfile): CharObj {
     const tile = this.clampTile(agent.deskPos.x, agent.deskPos.y);
 
     const desk = this.add.image(0, 0, DESK_TEX).setOrigin(0.5, 0.82);
     const chair = this.add.image(0, 0, CHAIR_TEX).setOrigin(0.5, 0.75);
 
+    // Karakter: sprite LimeZu bila ter-load, else fallback "pawn" kode (di-tint per role).
+    const charName = this.charNameFor(agent.spriteKey);
+    const baseScale = charName ? CHAR_SCALE : 1;
+    const sprite = this.add
+      .sprite(0, 0, charName ? `lz-${charName}-walk` : CHAR_TEX, 0)
+      .setOrigin(0.5, charName ? 1 : 0.92)
+      .setScale(baseScale);
+    if (!charName) sprite.setTint(colorForSprite(agent.spriteKey));
+
+    const top = charName ? -72 : -42; // posisi label/status menyesuaikan tinggi sprite
     const ring = this.add.ellipse(0, 2, 34, 18, 0xffe066, 0).setStrokeStyle(2, 0xffe066, 0).setVisible(false);
-    const sprite = this.add.image(0, 0, CHAR_TEX).setOrigin(0.5, 0.92).setTint(colorForSprite(agent.spriteKey));
     const label = this.add
-      .text(0, -42, agent.name, { fontFamily: "Segoe UI, sans-serif", fontSize: "12px", color: "#e6ebf5" })
+      .text(0, top, agent.name, { fontFamily: "Segoe UI, sans-serif", fontSize: "12px", color: "#e6ebf5" })
       .setOrigin(0.5, 1);
-    const statusDot = this.add.circle(10, -36, 4, STATUS_COLORS.idle, 1).setStrokeStyle(1, 0x0f1420, 1);
+    const statusDot = this.add.circle(10, top + 6, 4, STATUS_COLORS.idle, 1).setStrokeStyle(1, 0x0f1420, 1);
 
     const container = this.add.container(0, 0, [ring, sprite, label, statusDot]);
     const obj: CharObj = {
@@ -635,8 +721,12 @@ export class OfficeScene extends Phaser.Scene {
       desk,
       chair,
       deskTile: { x: tile.x, y: tile.y },
+      charName: charName ?? undefined,
+      faceDir: "down",
+      baseScale,
     };
     this.placeStation(obj);
+    this.playIdle(obj);
     this.applyStatus(obj, agent.status);
     return obj;
   }
@@ -668,11 +758,11 @@ export class OfficeScene extends Phaser.Scene {
     obj.statusDot.setFillStyle(STATUS_COLORS[status], 1);
     obj.statusTween?.stop();
     delete obj.statusTween;
-    obj.sprite.setScale(1);
+    obj.sprite.setScale(obj.baseScale);
     if (status === "working") {
       obj.statusTween = this.tweens.add({
         targets: obj.sprite,
-        scale: 1.14,
+        scale: obj.baseScale * 1.12,
         duration: 450,
         yoyo: true,
         repeat: -1,
@@ -736,12 +826,17 @@ export class OfficeScene extends Phaser.Scene {
         return;
       }
       obj.active?.stop();
+      let prev = { x: obj.tile.x, y: obj.tile.y };
       const steps = path.slice(1).map((node) => {
+        const from = prev;
+        prev = { x: node.x, y: node.y };
         const { wx, wy } = this.tileToIso(node.x, node.y);
+        const dir = this.screenDir(from.x, from.y, node.x, node.y);
         return {
           x: wx,
           y: wy + CHAR_FRONT_OFFSET,
           duration: 200,
+          onStart: () => this.playWalk(obj, dir),
           onComplete: () => {
             obj.tile = { x: node.x, y: node.y };
             obj.container.setDepth(this.depthFor(node.x, node.y) + SUB_CHAR);
@@ -751,7 +846,10 @@ export class OfficeScene extends Phaser.Scene {
       obj.active = this.tweens.chain({
         targets: obj.container,
         tweens: steps,
-        onComplete: () => onArrive?.(),
+        onComplete: () => {
+          this.playIdle(obj);
+          onArrive?.();
+        },
       });
     });
     this.easystar.calculate();
