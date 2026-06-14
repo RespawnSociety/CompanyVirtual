@@ -33,14 +33,15 @@ const ELEVATOR_TEX = "elevator-iso";
 const ISO_W = 64;
 const ISO_H = 32;
 const WALL_H = 64; // tinggi dinding belakang
-// Sub-lapisan depth pada satu petak. Karakter PALING DEPAN agar tak tertutup meja.
+// Sub-lapisan depth pada satu petak (back→front): kursi → karakter → MEJA.
+// Meja paling depan → karakter tampak DUDUK DI BELAKANG meja (kepala menyembul di atas meja).
 const D_FLOOR = -100000;
 const D_WALL = -90000;
-const SUB_CHAIR = 1;
-const SUB_DESK = 3;
-const SUB_CHAR = 6;
-// Geser karakter sedikit ke depan (bawah layar) → berdiri di depan meja & jelas terlihat.
-const CHAR_FRONT_OFFSET = 16;
+const SUB_CHAIR = 2;
+const SUB_CHAR = 5;
+const SUB_DESK = 9;
+// Geser karakter sedikit ke BELAKANG (atas layar) agar duduk di balik meja, bukan di depannya.
+const CHAR_FRONT_OFFSET = -6;
 
 // Karakter pixel-art LimeZu Modern Interiors (free) — frame 16×32, 4 arah × 6 frame.
 type Dir = "down" | "up" | "left" | "right";
@@ -736,8 +737,8 @@ export class OfficeScene extends Phaser.Scene {
     const d = this.tileToIso(obj.deskTile.x, obj.deskTile.y);
     const base = this.depthFor(obj.deskTile.x, obj.deskTile.y);
     obj.desk.setPosition(d.wx, d.wy).setDepth(base + SUB_DESK);
-    // Kursi di belakang+atas meja → sandaran menyembul di atas meja (depth di bawah meja).
-    obj.chair.setPosition(d.wx, d.wy - 24).setDepth(base + SUB_CHAIR);
+    // Kursi di bawah/belakang karakter yang duduk (depth paling belakang di petak ini).
+    obj.chair.setPosition(d.wx, d.wy - 4).setDepth(base + SUB_CHAIR);
     this.placeChar(obj);
   }
 
