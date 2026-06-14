@@ -37,6 +37,11 @@ const LZ_FRAME = { frameWidth: 16, frameHeight: 32 } as const;
 const CHAR_SCALE = 3; // 16×32 → 48×96 (1×2 petak)
 const DIR_FRAMES: Record<Dir, number> = { down: 0, up: 6, left: 12, right: 18 };
 
+// Hewan ambient: Snow Fox (Basic Asset Pack) — 16×16, 4 frame animasi.
+const FOX_SHEET = "fox";
+const FOX_PATH =
+  "assets/tilesets/Basic Asset Pack/Basic Asset Pack/Basic Animal Animations/Snow Fox/SnowFox.png";
+
 const STATUS_COLORS: Record<AgentStatus, number> = {
   idle: 0x55607a,
   working: 0x4aa3ff,
@@ -82,6 +87,11 @@ export class OfficeScene extends Phaser.Scene {
   private gridSrc: Phaser.Tilemaps.Tilemap | null = null; // map Tiled (hanya untuk grid)
   private props: Phaser.GameObjects.Image[] = [];
 
+  // Snow fox ambient (berkeliaran acak).
+  private fox?: Phaser.GameObjects.Sprite;
+  private foxTile = { x: 2, y: 2 };
+  private foxBusy = false;
+
   private clockText!: Phaser.GameObjects.Text;
   private minutes = 9 * 60;
 
@@ -102,6 +112,7 @@ export class OfficeScene extends Phaser.Scene {
       this.load.spritesheet(`lz-${name}-walk`, `${LZ_BASE}/${name}_run_16x16.png`, LZ_FRAME);
       this.load.spritesheet(`lz-${name}-idle`, `${LZ_BASE}/${name}_idle_anim_16x16.png`, LZ_FRAME);
     }
+    this.load.spritesheet(FOX_SHEET, FOX_PATH, { frameWidth: 16, frameHeight: 16 });
   }
 
   create(): void {
@@ -125,6 +136,8 @@ export class OfficeScene extends Phaser.Scene {
 
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => this.handleClick(p.worldX, p.worldY));
     this.time.addEvent({ delay: 2600, loop: true, callback: () => this.ambientTick() });
+    this.spawnFox();
+    this.time.addEvent({ delay: 2200, loop: true, callback: () => this.foxWander() });
 
     this.ready = true;
     if (this.pending) {
@@ -331,6 +344,14 @@ export class OfficeScene extends Phaser.Scene {
           });
         }
       }
+    }
+    if (this.textures.exists(FOX_SHEET) && !this.anims.exists("fox-walk")) {
+      this.anims.create({
+        key: "fox-walk",
+        frames: this.anims.generateFrameNumbers(FOX_SHEET, { start: 0, end: 3 }),
+        frameRate: 6,
+        repeat: -1,
+      });
     }
   }
 
@@ -541,6 +562,56 @@ export class OfficeScene extends Phaser.Scene {
     this.pathWalk(a, target.x, target.y, () => {
       a.roaming = false;
     });
+  }
+
+  // ---------------- snow fox (hewan ambient) ----------------
+
+  private spawnFox(): void {
+    if (this.fox || !this.textures.exists(FOX_SHEET)) return;
+    const s = this.randomWalkableNear(Math.floor(this.gridW / 2), Math.floor(this.gridH / 2), 6) ?? {
+      x: 2,
+      y: 2,
+    };
+    this.foxTile = s;
+    const { wx, wy } = this.tileToWorld(s.x, s.y);
+    this.fox = this.add.sprite(wx, wy + 8, FOX_SHEET, 0).setScale(2.4).setDepth(wy + 8);
+    if (this.anims.exists("fox-walk")) this.fox.play("fox-walk");
+  }
+
+  private foxWander(): void {
+    if (!this.fox || this.foxBusy) return;
+    const t = this.randomWalkableNear(this.foxTile.x, this.foxTile.y, 5);
+    if (!t) return;
+    this.easystar.findPath(this.foxTile.x, this.foxTile.y, t.x, t.y, (path) => {
+      if (!this.fox || !path || path.length < 2) return;
+      this.foxBusy = true;
+      let prev = { x: this.foxTile.x, y: this.foxTile.y };
+      const steps = path.slice(1).map((node) => {
+        const from = prev;
+        prev = { x: node.x, y: node.y };
+        const { wx, wy } = this.tileToWorld(node.x, node.y);
+        return {
+          x: wx,
+          y: wy + 8,
+          duration: 260,
+          onStart: () => {
+            if (this.fox && node.x !== from.x) this.fox.setFlipX(node.x < from.x);
+          },
+          onComplete: () => {
+            this.foxTile = { x: node.x, y: node.y };
+            this.fox?.setDepth(wy + 8);
+          },
+        };
+      });
+      this.tweens.chain({
+        targets: this.fox,
+        tweens: steps,
+        onComplete: () => {
+          this.foxBusy = false;
+        },
+      });
+    });
+    this.easystar.calculate();
   }
 
   private randomWalkableNear(tx: number, ty: number, radius: number): { x: number; y: number } | null {
