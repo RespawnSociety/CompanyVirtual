@@ -22,11 +22,11 @@ const RB_IMG = "lz-rb"; // Room_Builder (tileset image)
 const INT_SHEET = "lz-int"; // Interiors (spritesheet 16×16)
 const RB_PATH = "assets/tilesets/Modern tiles_Free/Interiors_free/16x16/Room_Builder_free_16x16.png";
 const INT_PATH = "assets/tilesets/Modern tiles_Free/Interiors_free/16x16/Interiors_free_16x16.png";
-// Indeks tile (dipilih lewat analisis pixel; bisa di-tune).
-const FLOOR_IDX = 217; // lantai abu kantor
-const WALL_IDX = 117; // dinding
-const INT_MONITOR = 668; // monitor/komputer meja
-const INT_PLANT = 584; // tanaman pot
+// Indeks tile (dipilih lewat montase + analisis pixel; bisa di-tune).
+const FLOOR_IDX = 131; // lantai keramik krem (kalem, bersih — bukan kayu herringbone yg ramai)
+const WALL_IDX = 185; // dinding (tekstur)
+const INT_MONITOR = 66; // monitor/komputer di stand (Interiors c2,r4) — di depan karakter
+const INT_PLANT = 674; // tanaman pot asli (Interiors c2,r42)
 
 // ----- karakter LimeZu -----
 const PAWN_TEX = "char-pawn"; // fallback bila aset karakter gagal muat
